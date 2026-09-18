@@ -1,0 +1,56 @@
+resource "aws_apigatewayv2_api" "sms" {
+  name          = "errand-sms"
+  protocol_type = "HTTP"
+}
+
+resource "aws_apigatewayv2_integration" "sms" {
+  api_id                 = aws_apigatewayv2_api.sms.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.ingress.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "sms" {
+  api_id = aws_apigatewayv2_api.sms.id
+  # POST only. Twilio posts; anything else is somebody looking around.
+  route_key = "POST /sms"
+  target    = "integrations/${aws_apigatewayv2_integration.sms.id}"
+}
+
+resource "aws_apigatewayv2_stage" "default" {
+  api_id      = aws_apigatewayv2_api.sms.id
+  name        = "$default"
+  auto_deploy = true
+
+  default_route_settings {
+    # A personal assistant does not receive hundreds of texts a second. This
+    # is the cheapest possible brake on somebody hammering the endpoint.
+    throttling_burst_limit = 10
+    throttling_rate_limit  = 5
+  }
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api.arn
+    format = jsonencode({
+      requestId = "$context.requestId"
+      status    = "$context.status"
+      route     = "$context.routeKey"
+      latency   = "$context.responseLatency"
+      # Deliberately no request body and no From number: the access log is not
+      # where message content should end up.
+    })
+  }
+}
+
+resource "aws_cloudwatch_log_group" "api" {
+  name              = "/aws/apigateway/errand-sms"
+  retention_in_days = var.log_retention_days
+  kms_key_id        = aws_kms_key.errand.arn
+}
+
+resource "aws_lambda_permission" "api" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ingress.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.sms.execution_arn}/*/*"
+}

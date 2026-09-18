@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill in. No secrets belong in this file:
+# the Twilio auth token goes to Secrets Manager, and the Google OAuth grant
+# to AgentCore Identity.
+
+owner_number       = "+15555550123"
+twilio_from_number = "+15555550999"
+
+# Look both of these up in the Bedrock console for this account and region.
+# Do not copy an id out of documentation or out of a model's memory.
+planner_model_id = "PUT-THE-ID-FROM-THE-BEDROCK-CONSOLE-HERE"
+reader_model_id  = "PUT-THE-ID-FROM-THE-BEDROCK-CONSOLE-HERE"
+
+# Tier 3 is refused entirely while this is zero. Set it to whatever you are
+# willing to lose to a bug, not to whatever you can afford.
+tier3_cap_cents = 0
+
+undo_seconds = 60

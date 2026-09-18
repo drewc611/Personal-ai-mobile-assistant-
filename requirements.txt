@@ -1,0 +1,5 @@
+# Runtime. Pinned loosely on purpose: this is a single-user system and an
+# unattended minor bump is less risky than a stale SDK.
+boto3>=1.35
+strands-agents>=0.1
+bedrock-agentcore>=0.1

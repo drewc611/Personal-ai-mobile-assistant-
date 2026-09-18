@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check errand/
+
+      - name: Unit tests
+        run: pytest errand/tests/unit
+
+      # The injection suite runs on every push, not nightly. A prompt change
+      # that makes the planner more willing is exactly the change that should
+      # fail a build.
+      - name: Injection suite
+        run: pytest errand/tests/injection -m injection
+
+      - name: Acceptance criteria
+        run: pytest errand/tests/acceptance -m acceptance
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.5"
+      - name: Format check
+        run: terraform -chdir=errand/infra fmt -check -recursive
+      - name: Validate
+        run: |
+          terraform -chdir=errand/infra init -backend=false
+          terraform -chdir=errand/infra validate
