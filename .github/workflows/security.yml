@@ -1,0 +1,77 @@
+name: security
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "41 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    # The whole design says no secret ever lands in the repo: the Twilio auth
+    # token lives in Secrets Manager and Google's tokens in AgentCore Identity.
+    # This job is what turns that from an intention into something checkable.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Full history: a secret that was committed and then removed is
+          # still a leaked secret, and a shallow clone cannot see it.
+          fetch-depth: 0
+
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependencies:
+    # Only meaningful on a pull request, where there are two commits to diff.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  permissions-audit:
+    # A workflow with no `permissions:` block inherits whatever the repository
+    # default is, which is how a read-only job ends up holding a write token.
+    # This check is three lines of grep and it does not drift.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Every workflow declares its permissions
+        run: |
+          set -e
+          missing=0
+          for f in .github/workflows/*.yml; do
+            if ! grep -q "^permissions:" "$f"; then
+              echo "ERROR: $f has no top-level permissions block"; missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] && echo "all workflows declare permissions"
+
+      - name: Every action is pinned to a commit SHA
+        run: |
+          set -e
+          # A tag can be repointed by the action's owner; a SHA cannot.
+          # Anchored to a real YAML key so this check cannot match the
+          # pattern written inside this very file.
+          if grep -rEn "^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*[^@]+@(v[0-9]|main|master)" .github/workflows/; then
+            echo "ERROR: the lines above use a tag or branch instead of a SHA"
+            exit 1
+          fi
+          echo "all actions are pinned to SHAs"

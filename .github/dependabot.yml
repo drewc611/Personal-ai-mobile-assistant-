@@ -1,0 +1,33 @@
+version: 2
+
+updates:
+  # The actions are pinned to SHAs, which is the safe thing and also the
+  # thing that goes stale silently. This is what keeps them current.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    labels: ["dependencies", "github-actions"]
+
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"
+    labels: ["dependencies", "python"]
+    groups:
+      # One PR for the whole set rather than three. A single-user project does
+      # not need three separate review cycles a week.
+      python-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: terraform
+    directory: "/errand/infra"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "infra"
+    labels: ["dependencies", "terraform"]

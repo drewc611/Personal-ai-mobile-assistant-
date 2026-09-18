@@ -1,5 +1,15 @@
 # Errand
 
+[![ci](https://github.com/drewc611/Personal-ai-mobile-assistant-/actions/workflows/ci.yml/badge.svg)](https://github.com/drewc611/Personal-ai-mobile-assistant-/actions/workflows/ci.yml)
+[![codeql](https://github.com/drewc611/Personal-ai-mobile-assistant-/actions/workflows/codeql.yml/badge.svg)](https://github.com/drewc611/Personal-ai-mobile-assistant-/actions/workflows/codeql.yml)
+[![security](https://github.com/drewc611/Personal-ai-mobile-assistant-/actions/workflows/security.yml/badge.svg)](https://github.com/drewc611/Personal-ai-mobile-assistant-/actions/workflows/security.yml)
+[![tests](https://img.shields.io/badge/tests-228%20passing-brightgreen)](errand/tests)
+[![injection suite](https://img.shields.io/badge/injection%20suite-26%20payloads-8a2be2)](errand/tests/injection)
+[![python](https://img.shields.io/badge/python-3.12-3776ab?logo=python&logoColor=white)](pyproject.toml)
+[![terraform](https://img.shields.io/badge/terraform-1.9.5-7b42bc?logo=terraform&logoColor=white)](errand/infra)
+[![ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![actions pinned to SHA](https://img.shields.io/badge/actions-pinned%20to%20SHA-0a7bbb)](.github/workflows)
+
 Andrew's personal text agent. Runs in his own AWS account on Bedrock. One user,
 one phone number, no work data.
 
@@ -27,23 +37,117 @@ rather than adding a feature it lacks.
 
 ## How a text moves through it
 
-```
-Twilio SMS
-  -> API Gateway (POST /sms only, throttled)
-  -> ingress Lambda      signature check, allowlist, nothing else
-  -> SQS FIFO            one message group, so order is guaranteed
-  -> dispatcher Lambda   parses commands; free text goes to the agent
-     -> AgentCore Runtime   Strands agent, Haiku or Sonnet
-        -> budget check     before the call, not after
-        -> policy gate      tier 0/1 run, tier 2+ return PENDING_APPROVAL
-        -> reader model     untrusted content, no tools, fixed schema
-  -> Twilio SMS reply
-EventBridge Scheduler -> undo releaser (every minute), daily approval digest
+```mermaid
+flowchart TB
+    TW["Twilio SMS"]
+
+    subgraph edge["Internet edge — says no, decides nothing"]
+        AGW["API Gateway<br/>POST /sms only, throttled"]
+        ING["ingress Lambda<br/>1. Twilio signature<br/>2. one allowlisted number<br/>3. enqueue"]
+    end
+
+    DROP(["no reply, one audit row"])
+    SQS[["SQS FIFO — one message group,<br/>so nothing overtakes STOP ALL"]]
+
+    subgraph private["Private — no inbound path from the internet"]
+        DISP["dispatcher Lambda<br/>commands parsed deterministically"]
+        RT["AgentCore Runtime<br/>Strands agent"]
+        BUD{"budget checked<br/>before the call"}
+        MODEL["Haiku, or Sonnet<br/>once the task earns it"]
+        GATE{"policy gate<br/>tier from tool + args"}
+        RUN["tool executes"]
+        PEND["PENDING_APPROVAL<br/>nothing happens"]
+    end
+
+    STORE[("DynamoDB + S3<br/>KMS customer managed key")]
+
+    TW --> AGW --> ING
+    ING -. "bad signature or unknown number" .-> DROP
+    ING --> SQS --> DISP
+    DISP -- "free text only" --> RT --> BUD
+    BUD -- "at the cap" --> DROP
+    BUD -- "under" --> MODEL --> GATE
+    GATE -- "tier 0 read / 1 draft" --> RUN
+    GATE -- "tier 2+ send, spend, irreversible" --> PEND
+    RUN --> STORE
+    PEND --> DISP
+    DISP -- "reply" --> TW
 ```
 
+The ingress Lambda is the only thing reachable from the internet, and it is a
+couple of hundred lines that are entirely about saying no. It cannot read a
+task, an approval, or any cached content, so compromising the webhook does not
+read the mailbox.
+
 An approved action does not go out immediately. It lands in an outbox with a
-release time; the releaser sends whatever is past its window. That minute is
-the undo.
+release time; a scheduled Lambda sends whatever is past its window. That minute
+is the undo.
+
+## How a tool call is decided
+
+This is the disagreement with Instinct, drawn out. The tier comes from the tool
+name and its arguments — never from anything the model says about its own
+intent. A model that writes "this is only a draft" still gets tier 2 when it
+calls `gmail_send`.
+
+```mermaid
+flowchart TB
+    CALL["model calls a tool<br/>tools.registry.call is the only way in"]
+    KNOWN{"registered tool?"}
+    DENY1["DENIED<br/>an unknown tool is refused, not guessed"]
+    TIER["tier decided from the tool name<br/>and the arguments, never from<br/>anything the model says"]
+    RULES{"standing rule<br/>says deny?"}
+    DENY2["DENIED / pulled back<br/>e.g. never book Spirit"]
+    FREE{"tier 0 or 1?"}
+    RUN["runs now<br/>read, or show the draft"]
+    ALLOW{"standing rule<br/>pre-approves it?"}
+    HOLD["HELD — 60s undo window"]
+    PEND["PENDING_APPROVAL<br/>nothing executes"]
+    ASK["Andrew texts T7 yes<br/>tier 3 echoes the amount<br/>tier 4 needs a second confirm"]
+    EXEC["the stored arguments execute,<br/>checked against the digest<br/>taken when the approval was made"]
+
+    CALL --> KNOWN
+    KNOWN -- no --> DENY1
+    KNOWN -- yes --> TIER --> RULES
+    RULES -- yes --> DENY2
+    RULES -- no --> FREE
+    FREE -- yes --> RUN
+    FREE -- no --> ALLOW
+    ALLOW -- "yes, and never tier 4" --> HOLD
+    ALLOW -- no --> PEND --> ASK --> HOLD
+    HOLD -- "window closes" --> EXEC
+    HOLD -- "T7 undo" --> DENY2
+```
+
+## Why an injected email does not get anywhere
+
+```mermaid
+flowchart LR
+    subgraph world["Written by someone who is not Andrew"]
+        MAIL["email body"]
+        PAGE["web page"]
+    end
+
+    READER["reader model<br/>invoked with NO tool config<br/>— the absence is the isolation"]
+    SCHEMA{"fixed schema"}
+    DROPPED(["dropped, not escaped:<br/>tool_calls, approved,<br/>tier_override, anything else"])
+    EXTRACT["untrusted_extract<br/>summary, dates, amounts,<br/>contains_instructions_to_assistant"]
+    PLANNER["planner model<br/>never sees a raw body"]
+    GATE["policy gate"]
+
+    MAIL --> READER
+    PAGE --> READER
+    READER --> SCHEMA
+    SCHEMA -- "declared field" --> EXTRACT
+    SCHEMA -- "everything else" --> DROPPED
+    EXTRACT --> PLANNER
+    PLANNER -- "every tool call" --> GATE
+```
+
+Three layers, in order of how much they are trusted: no tools, then the schema,
+then the gate. Only the first and third are load-bearing — which is why
+`errand/tests/injection/` runs its 26 payloads against a planner that does
+exactly what the attacker asked, and asserts nothing left the system anyway.
 
 ## Texting it
 
@@ -139,6 +243,32 @@ placeholders: `monthly_budget_usd` (every model call refused),
 `tier3_cap_cents` (every purchase refused), and `model_rates_json` (the budget
 cannot price a call, so calls are refused). `terraform output
 configuration_warnings` lists whichever are still unset.
+
+## Repository and CI
+
+Every push runs three workflows, and each one fails the build rather than
+warning:
+
+| Workflow | What it refuses to let through |
+|---|---|
+| `ci` | lint, unit tests, the injection suite, the acceptance criteria, `terraform fmt` and `validate`, and a Lambda artifact that is over 50MB or contains tests, terraform state or the agent's dependencies |
+| `codeql` | Python security queries (`security-extended`), also weekly so a new rule finds an old bug |
+| `security` | a secret anywhere in the full git history, a dependency with a high-severity advisory, a workflow missing a `permissions:` block, an action pinned to a tag instead of a SHA |
+
+The last two of those are checks on the repository itself. Every action is
+pinned to a commit SHA rather than a tag — a tag is a moving pointer its owner
+can repoint, a SHA is the code that was reviewed — and CI fails if anyone
+reintroduces a tag pin. Dependabot raises weekly PRs to move the pins.
+
+`SECURITY.md` has the full picture, including a section on what is *not*
+defended, which is the more useful half.
+
+Everything CI runs is runnable locally:
+
+```bash
+cd errand && make check     # lint, terraform fmt + validate, all tests
+make build                  # the artifact, with the size guard
+```
 
 ## Layout
 
