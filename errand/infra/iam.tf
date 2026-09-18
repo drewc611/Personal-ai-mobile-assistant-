@@ -32,7 +32,7 @@ data "aws_iam_policy_document" "ingress" {
 
   statement {
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.telegram.arn]
+    resources = [aws_secretsmanager_secret.twilio.arn]
   }
 
   statement {
@@ -57,8 +57,8 @@ resource "aws_iam_role_policy" "ingress" {
 }
 
 # ---------------------------------------------------------------------------
-# Dispatcher: reads the queue, calls AgentCore Runtime, replies on Telegram,
-# transcribes voice notes. It holds no Bedrock model permissions - the model
+# Dispatcher: reads the queue, calls AgentCore Runtime, replies over Twilio,
+# transcribes voice memos. It holds no Bedrock model permissions - the model
 # runs inside AgentCore, not here.
 # ---------------------------------------------------------------------------
 
@@ -92,7 +92,7 @@ data "aws_iam_policy_document" "dispatcher" {
 
   statement {
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.telegram.arn]
+    resources = [aws_secretsmanager_secret.twilio.arn]
   }
 
   statement {
@@ -129,7 +129,7 @@ resource "aws_iam_role_policy" "dispatcher" {
 # ---------------------------------------------------------------------------
 # Agent runtime: the only principal that may invoke a model. It reaches the
 # same tables (the gate and the audit log run inside it) but never the queue
-# and never Telegram.
+# and never Twilio.
 # ---------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "agent_assume" {

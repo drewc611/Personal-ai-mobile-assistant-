@@ -6,8 +6,9 @@ in this file; only free text reaches the planner. That split is the point -
 the actions with consequences are decided by a parser, not by a model reading
 intent.
 
-Replies are built as text plus buttons and handed to the Channel. Nothing in
-this file knows it is talking to Telegram.
+Replies are built as text plus a set of Buttons and handed to the Channel.
+Over SMS the buttons come out as a "Reply "T7 yes"" line; on a channel with
+something tappable they come out as buttons. Nothing in this file knows which.
 """
 
 from __future__ import annotations
@@ -27,18 +28,13 @@ from errand.store import audit_store, receipts_store, tasks_store
 from errand.tools import connections, registry
 
 HELP_TEXT = (
-    "Send me anything to start a task.\n"
-    "\n"
-    "/tasks - what's open\n"
-    "/status T7 - one task\n"
-    "/rules - standing rules\n"
-    "/tighten <type> - make a type ask again\n"
-    "/budget - this month's spend\n"
-    "/disconnect gmail - revoke and delete, with a receipt\n"
-    "STOP ALL - halt everything\n"
-    "\n"
-    "Approvals come with buttons. You can also type \"T7 yes\", \"T7 no\", "
-    "or \"T7 undo\" if the buttons have scrolled away."
+    "Text me anything to start a task.\n"
+    'T7 yes / T7 no / T7 status / T7 undo / T7 edit\n'
+    '"pending" what needs a yes, then "yes all" or "yes 1,3"\n'
+    '"tasks" open tasks, "rules" standing rules, "budget" this month\n'
+    '"tighten dining" makes a type ask again\n'
+    '"disconnect gmail" revokes and deletes, with a receipt\n'
+    '"STOP ALL" halts everything'
 )
 
 
@@ -48,7 +44,7 @@ class Reply:
     buttons: list[Button] = field(default_factory=list)
     task_id: str = ""
     retire_message: str = ""      # a button message that should stop being tappable
-    acknowledge: str = ""         # short toast for the button press itself
+    acknowledge: str = ""         # short toast, for channels that have one
 
     @property
     def empty(self) -> bool:
@@ -110,6 +106,44 @@ def _dispatch(command: commands.Command) -> Reply:
     return _free_text(command.raw)
 
 
+# ---------------------------------------------------------------- buttons
+
+
+def _approval_buttons(approval: Approval) -> list[Button]:
+    """Approve and Reject, and for tier 4 a Confirm that only appears once the
+    first approval is in, so one message can never finish it."""
+    task = approval.task_id
+    if approval.confirms_received and approval.confirms_outstanding:
+        return [
+            Button("Confirm - cannot be undone",
+                   commands.button_token(commands.CONFIRM, approval.approval_id),
+                   reply=f"{task} yes"),
+            Button("Reject", commands.button_token(commands.REJECT, approval.approval_id),
+                   reply=f"{task} no"),
+        ]
+
+    if approval.amount_cents:
+        amount = money.format_amount(approval.amount_cents)
+        approve = Button("Approve",
+                         commands.button_token(commands.APPROVE, approval.approval_id),
+                         reply=f"{task} yes {amount}")
+    else:
+        approve = Button("Approve",
+                         commands.button_token(commands.APPROVE, approval.approval_id),
+                         reply=f"{task} yes")
+
+    return [
+        approve,
+        Button("Reject", commands.button_token(commands.REJECT, approval.approval_id),
+               reply=f"{task} no"),
+    ]
+
+
+def _undo_button(task_id: str, approval_id: str) -> Button:
+    return Button("Undo", commands.button_token(commands.UNDO, approval_id),
+                  reply=f"{task_id} undo")
+
+
 # ---------------------------------------------------------------- listings
 
 
@@ -117,11 +151,12 @@ def _list_tasks() -> Reply:
     tasks = tasks_store.open_tasks()
     if not tasks:
         return Reply("Nothing open.")
-    lines = [f"{t.task_id} {t.status.lower().replace('_', ' ')}: {t.title[:70]}" for t in tasks]
+    lines = [f"{t.task_id} {t.status.lower().replace('_', ' ')}: {t.title[:60]}" for t in tasks]
     return Reply("\n".join(lines))
 
 
 def _pending() -> Reply:
+    """The numbered list "yes 1,3" indexes into."""
     approvals.expire_stale()
     waiting = approvals.pending()
     if not waiting:
@@ -131,21 +166,28 @@ def _pending() -> Reply:
 
 def _digest_text(waiting: list[Approval]) -> str:
     lines = [f"{len(waiting)} waiting on you:"]
-    for approval in waiting:
+    for index, approval in enumerate(waiting, 1):
         suffix = ""
         if approval.amount_cents:
-            suffix = f" - {money.format_amount(approval.amount_cents)}"
-        lines.append(f"{approval.task_id}: {approval.summary}{suffix}")
+            suffix = f" [{money.format_amount(approval.amount_cents)}]"
+        lines.append(f"{index}. {approval.task_id} {approval.summary}{suffix}")
     return "\n".join(lines)
 
 
 def _digest_buttons(waiting: list[Approval]) -> list[Button]:
+    """One Approve per item, plus Approve all when there is more than one.
+
+    Over SMS these render as the reply hints, which is why the hint for the
+    batch is "yes all" and not a token: that is what Andrew actually types.
+    """
     buttons = [
-        Button(f"Approve {a.task_id}", commands.button_token(commands.APPROVE, a.approval_id))
+        Button(f"Approve {a.task_id}",
+               commands.button_token(commands.APPROVE, a.approval_id),
+               reply=f"{a.task_id} yes")
         for a in waiting
     ]
     if len(waiting) > 1:
-        buttons.append(Button("Approve all", commands.APPROVE_ALL_TOKEN))
+        buttons.append(Button("Approve all", commands.APPROVE_ALL_TOKEN, reply="yes all"))
     return buttons
 
 
@@ -154,7 +196,7 @@ def _rules() -> Reply:
     if not active:
         return Reply("No standing rules. Everything at tier 2 and up asks you first.")
     lines = [f"[{r.effect}] {r.text}" for r in active]
-    lines.append("/tighten <type> drops the allow rules for a type.")
+    lines.append('"tighten <type>" drops the allow rules for a type.')
     return Reply("\n".join(lines))
 
 
@@ -169,12 +211,12 @@ def _status(task_id: str) -> Reply:
     if task is None:
         return Reply(f"No task {task_id}.")
 
-    lines = [f"{task.task_id} {task.status.lower().replace('_', ' ')}: {task.title[:90]}"]
+    lines = [f"{task.task_id} {task.status.lower().replace('_', ' ')}: {task.title[:80]}"]
     buttons: list[Button] = []
 
     for entry in outbox.held_for_task(task_id):
         lines.append(f"Going out in {entry.seconds_left}s: {entry.summary}")
-        buttons.append(Button("Undo", commands.button_token(commands.UNDO, entry.approval_id)))
+        buttons.append(_undo_button(task_id, entry.approval_id))
 
     for approval in approvals.open_for_task(task_id):
         lines.append(f"Waiting on you: {approval.summary}")
@@ -184,7 +226,7 @@ def _status(task_id: str) -> Reply:
         lines.append(f"Receipt: {receipt.summary}")
 
     if task.last_message and len(lines) == 1:
-        lines.append(task.last_message[:200])
+        lines.append(task.last_message[:160])
 
     return Reply("\n".join(lines), buttons=buttons, task_id=task_id)
 
@@ -192,68 +234,84 @@ def _status(task_id: str) -> Reply:
 # ---------------------------------------------------------------- approvals
 
 
-def _approval_buttons(approval: Approval) -> list[Button]:
-    """Approve, Reject, Edit - and for tier 4, a Confirm that only appears
-    once the first approval is in, so one tap can never finish it."""
-    if approval.confirms_received and approval.confirms_outstanding:
-        return [
-            Button("Confirm - cannot be undone",
-                   commands.button_token(commands.CONFIRM, approval.approval_id)),
-            Button("Reject", commands.button_token(commands.REJECT, approval.approval_id)),
-        ]
-    return [
-        Button("Approve", commands.button_token(commands.APPROVE, approval.approval_id)),
-        Button("Reject", commands.button_token(commands.REJECT, approval.approval_id)),
-        Button("Edit", commands.button_token(commands.EDIT, approval.approval_id)),
-    ]
-
-
-def _find(command: commands.Command) -> tuple[Approval | None, str]:
+def _resolve(command: commands.Command) -> tuple[list[Approval], str]:
+    """Which approvals this message is about, and a note about any it could
+    not match."""
     approvals.expire_stale()
+    waiting = approvals.pending()
 
     if command.approval_id:
         for approval in approvals.for_all():
             if approval.approval_id == command.approval_id:
                 if not approval.is_open:
-                    return None, f"{approval.task_id} is already {approval.status.lower()}."
-                return approval, ""
-        return None, "That one is gone."
+                    return [], f"{approval.task_id} is already {approval.status.lower()}."
+                return [approval], ""
+        return [], "That one is gone."
 
     if command.task_id:
-        open_ones = [a for a in approvals.open_for_task(command.task_id) if a.is_open]
-        if not open_ones:
-            return None, f"Nothing waiting on {command.task_id}."
-        return open_ones[0], ""
+        matches = [a for a in waiting if a.task_id == command.task_id]
+        if not matches:
+            return [], f"Nothing waiting on {command.task_id}."
+        return matches[:1], ""
 
-    waiting = approvals.pending()
+    if command.all_pending:
+        if not waiting:
+            return [], "Nothing waiting on you."
+        return waiting, ""
+
+    if command.indices:
+        picked, missing = [], []
+        for index in command.indices:
+            if 1 <= index <= len(waiting):
+                picked.append(waiting[index - 1])
+            else:
+                missing.append(index)
+        if not picked:
+            return [], f"No pending item {', '.join(str(i) for i in command.indices)}."
+        note = f"(no item {', '.join(str(i) for i in missing)})" if missing else ""
+        return picked, note
+
     if len(waiting) == 1:
-        return waiting[0], ""
+        return waiting, ""
     if not waiting:
-        return None, "Nothing waiting on you."
-    return None, "Which one? /pending lists them."
+        return [], "Nothing waiting on you."
+    return [], 'Say which one: "T7 yes", "yes 1,3", or "yes all".'
 
 
 def _approve(command: commands.Command) -> Reply:
-    approval, problem = _find(command)
-    if approval is None:
-        return Reply(problem)
+    targets, note = _resolve(command)
+    if not targets:
+        return Reply(note)
 
-    try:
-        updated = approvals.approve(approval, amount_text=command.amount_text or None)
-    except approvals.ApprovalError as exc:
-        return Reply(str(exc), buttons=_approval_buttons(approval), task_id=approval.task_id)
+    lines: list[str] = []
+    buttons: list[Button] = []
 
-    if updated.confirms_outstanding > 0:
-        return Reply(
-            f"{updated.task_id}: {updated.summary} cannot be undone. Confirm to go ahead.",
-            buttons=_approval_buttons(updated),
-            task_id=updated.task_id,
-        )
+    for approval in targets:
+        try:
+            updated = approvals.approve(approval, amount_text=command.amount_text or None)
+        except approvals.ApprovalError as exc:
+            lines.append(str(exc))
+            buttons.extend(_approval_buttons(approval))
+            continue
 
-    return _hold(updated)
+        if updated.confirms_outstanding > 0:
+            lines.append(
+                f"{updated.task_id}: {updated.summary} cannot be undone. Confirm to go ahead."
+            )
+            buttons.extend(_approval_buttons(updated))
+            continue
+
+        entry = _hold(updated)
+        lines.append(f"{updated.task_id}: {updated.summary} goes out in {entry.seconds_left}s.")
+        buttons.append(_undo_button(updated.task_id, updated.approval_id))
+
+    if note:
+        lines.append(note)
+    return Reply("\n".join(lines), buttons=buttons,
+                 task_id=targets[0].task_id if len(targets) == 1 else "")
 
 
-def _hold(approval: Approval) -> Reply:
+def _hold(approval: Approval) -> outbox.OutboxEntry:
     entry = outbox.hold(
         approval_id=approval.approval_id,
         task_id=approval.task_id,
@@ -272,11 +330,7 @@ def _hold(approval: Approval) -> Reply:
         outcome="APPROVED",
         detail={"approval_id": approval.approval_id, "undo_seconds": entry.seconds_left},
     )
-    return Reply(
-        f"{approval.task_id}: {approval.summary} goes out in {entry.seconds_left}s.",
-        buttons=[Button("Undo", commands.button_token(commands.UNDO, approval.approval_id))],
-        task_id=approval.task_id,
-    )
+    return entry
 
 
 def _approve_all() -> Reply:
@@ -287,15 +341,14 @@ def _approve_all() -> Reply:
 
     done: list[str] = []
     problems: list[str] = []
-    still_waiting: list[Approval] = []
+    held_back: list[Approval] = []
 
     for approval in waiting:
         # Tier 4 and anything with a charge are never part of a bulk approve.
-        # "Approve all" is for clearing a morning's worth of ordinary sends,
-        # and a second confirm that a single tap can satisfy is not a second
-        # confirm.
+        # "yes all" is for clearing a morning of ordinary sends, and a second
+        # confirm that one message can satisfy is not a second confirm.
         if approval.tier >= int(Tier.IRREVERSIBLE) or approval.amount_cents:
-            still_waiting.append(approval)
+            held_back.append(approval)
             continue
         try:
             updated = approvals.approve(approval)
@@ -306,56 +359,65 @@ def _approve_all() -> Reply:
         done.append(updated.task_id)
 
     lines = []
+    buttons: list[Button] = []
     if done:
         lines.append(f"Approved {', '.join(done)}. They go out in a minute.")
-    if still_waiting:
+        buttons.append(Button("Undo all", commands.button_token(commands.UNDO, "all"),
+                              reply="undo"))
+    if held_back:
         lines.append(
-            "Left for you to do one at a time: "
-            + ", ".join(f"{a.task_id} ({a.summary})" for a in still_waiting)
+            "One at a time, these need you to look: "
+            + "; ".join(
+                f"{a.task_id} {a.summary}"
+                + (f" [{money.format_amount(a.amount_cents)}]" if a.amount_cents else "")
+                for a in held_back
+            )
             + "."
         )
+        # Built through _approval_buttons so a spend carries the amount in its
+        # hint. Telling him to text "T7 yes" for a charge would send him
+        # straight into the refusal for not echoing the amount.
+        for approval in held_back:
+            buttons.extend(_approval_buttons(approval))
     lines.extend(problems)
     if not lines:
         lines.append("Nothing could be approved.")
 
-    buttons = [
-        Button("Undo all", commands.button_token(commands.UNDO, "all"))
-    ] if done else []
-    buttons.extend(
-        Button(f"Approve {a.task_id}", commands.button_token(commands.APPROVE, a.approval_id))
-        for a in still_waiting
-    )
     return Reply("\n".join(lines), buttons=buttons)
 
 
 def _reject(command: commands.Command, *, edit: bool) -> Reply:
-    approval, problem = _find(command)
-    if approval is None:
-        return Reply(problem)
+    targets, note = _resolve(command)
+    if not targets:
+        return Reply(note)
 
-    approvals.deny(approval, reason="edit requested" if edit else "rejected by Andrew")
-    task = tasks_store.set_status(
-        approval.task_id, tasks_store.STOPPED,
-        note="edit requested" if edit else "rejected",
-    )
-    if task is not None:
-        tasks_store.record_outcome(task, "edited" if edit else "rejected")
-    audit_store.write(
-        task_id=approval.task_id,
-        phase=audit_store.PHASE_AFTER,
-        event="APPROVAL_EDIT" if edit else "APPROVAL_REJECTED",
-        tool=approval.tool,
-        tier=approval.tier,
-        outcome="DENIED",
-    )
-
-    if edit:
-        return Reply(
-            f"{approval.task_id} dropped, nothing sent. Tell me what to change and "
-            f"I'll redo it.",
-            task_id=approval.task_id,
+    lines = []
+    for approval in targets:
+        approvals.deny(approval, reason="edit requested" if edit else "rejected by Andrew")
+        task = tasks_store.set_status(
+            approval.task_id, tasks_store.STOPPED,
+            note="edit requested" if edit else "rejected",
         )
-    return Reply(f"{approval.task_id} dropped. Nothing sent.", task_id=approval.task_id)
+        if task is not None:
+            tasks_store.record_outcome(task, "edited" if edit else "rejected")
+        audit_store.write(
+            task_id=approval.task_id,
+            phase=audit_store.PHASE_AFTER,
+            event="APPROVAL_EDIT" if edit else "APPROVAL_REJECTED",
+            tool=approval.tool,
+            tier=approval.tier,
+            outcome="DENIED",
+        )
+        if edit:
+            lines.append(
+                f"{approval.task_id} dropped, nothing sent. Tell me what to change."
+            )
+        else:
+            lines.append(f"{approval.task_id} dropped. Nothing sent.")
+
+    if note:
+        lines.append(note)
+    return Reply("\n".join(lines))
 
 
 def _undo(command: commands.Command) -> Reply:
@@ -401,9 +463,9 @@ def _undo(command: commands.Command) -> Reply:
 
 
 def _stop_all() -> Reply:
-    """The kill switch. Halts running tasks, voids pending approvals, and says
-    what it stopped - a kill switch that reports nothing is one you cannot
-    trust in the moment you need it."""
+    """The kill switch. Halts running tasks, revokes pending approvals, and
+    says what it stopped - a kill switch that reports nothing is one you
+    cannot trust in the moment you need it."""
     cancelled = outbox.cancel_all()
     revoked = approvals.revoke_all()
     stopped = []
@@ -437,7 +499,7 @@ def _stop_all() -> Reply:
             + "."
         )
     if revoked:
-        lines.append(f"Approvals voided: {len(revoked)}.")
+        lines.append(f"Approvals revoked: {len(revoked)}.")
     return Reply(" ".join(lines))
 
 
@@ -457,7 +519,7 @@ def _tighten(domain: str) -> Reply:
 def _free_text(text: str) -> Reply:
     state = budget.check()
     if state.blocked:
-        # Hard rule 8: at the cap, the only model call that still happens is
+        # Hard rule 8: at the cap the only model call that still happens is
         # none, and the reply says so.
         return Reply(state.message)
 
@@ -508,7 +570,7 @@ def _free_text(text: str) -> Reply:
     text_out = f"{prefix}{answer}".strip()
 
     if state.status == budget.WARN and state.newly_warned:
-        text_out = f"{text_out}\n\n{state.message}"
+        text_out = f"{text_out}\n{state.message}"
 
     return Reply(text_out, buttons=buttons, task_id=task.task_id)
 
@@ -558,8 +620,8 @@ def release_due() -> list[Reply]:
 
 
 def daily_digest() -> Reply:
-    """The batched-approval message. One a day, with a button per item and an
-    Approve all for the ordinary ones."""
+    """The batched-approval message. One a day, numbered so it can be answered
+    with "yes all" or "yes 1,3"."""
     approvals.expire_stale()
     waiting = approvals.pending()
     tasks = tasks_store.open_tasks()
@@ -578,4 +640,4 @@ def daily_digest() -> Reply:
     if state.status in (budget.WARN, budget.BLOCKED):
         lines.append(state.message)
 
-    return Reply("\n\n".join(lines), buttons=buttons)
+    return Reply("\n".join(lines), buttons=buttons)

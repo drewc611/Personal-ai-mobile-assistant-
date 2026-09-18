@@ -1,9 +1,9 @@
 """Test wiring.
 
 Every test runs against the memory backend, fake providers, and a recording
-channel, with a frozen clock. Nothing here touches AWS or Telegram, which is
+channel, with a frozen clock. Nothing here touches AWS or Twilio, which is
 deliberate: the properties these tests check - a send never happens without an
-approval, an unknown sender never gets a reply - are properties of this code,
+approval, an unknown number never gets a reply - are properties of this code,
 and a test that needs credentials to prove them is a test nobody runs.
 """
 
@@ -15,7 +15,9 @@ import os
 import pytest
 
 os.environ.setdefault("ERRAND_BACKEND", "memory")
-os.environ.setdefault("ERRAND_OWNER_TELEGRAM_ID", "8675309")
+os.environ.setdefault("ERRAND_OWNER_NUMBER", "+15555550123")
+os.environ.setdefault("ERRAND_TWILIO_FROM", "+15555550999")
+os.environ.setdefault("ERRAND_WEBHOOK_URL", "https://errand.example.com/sms")
 os.environ.setdefault("ERRAND_DEFAULT_MODEL_ID", "test-haiku")
 os.environ.setdefault("ERRAND_ESCALATION_MODEL_ID", "test-sonnet")
 os.environ.setdefault("ERRAND_READER_MODEL_ID", "test-reader")
@@ -42,8 +44,9 @@ from errand.store import backend as backend_mod  # noqa: E402
 from errand.tools import providers  # noqa: E402
 
 FIXED_NOW = 1_764_500_000.0  # 2025-11-30T12:13:20Z
-OWNER_ID = "8675309"
-WEBHOOK_SECRET = "a-long-enough-webhook-secret-value-32+"
+OWNER_NUMBER = "+15555550123"
+AUTH_TOKEN = "test_auth_token"
+WEBHOOK_URL = "https://errand.example.com/sms"
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +56,7 @@ def _isolate():
 
     secrets.clear_cache()
     secrets.set_cached(
-        "errand/telegram", {"bot_token": "test-bot-token", "webhook_secret": WEBHOOK_SECRET}
+        "errand/twilio", {"account_sid": "AC_test", "auth_token": AUTH_TOKEN}
     )
 
     providers.set_providers(providers.build_fake_providers())
@@ -147,73 +150,72 @@ def fake_reader():
     return install
 
 
-def text_message(text: str, *, sender: str = OWNER_ID, update_id: str = "1"):
-    """A Telegram Update for a plain text message."""
+def sms_params(text: str, *, sender: str = OWNER_NUMBER, sid: str = "SM1"):
+    """The form parameters Twilio posts for a plain text message."""
+    return {"From": sender, "To": "+15555550999", "Body": text, "MessageSid": sid}
+
+
+def mms_params(*, sender: str = OWNER_NUMBER, sid: str = "SM1", body: str = "",
+               content_type: str = "audio/mpeg"):
     return {
-        "update_id": int(update_id),
-        "message": {
-            "message_id": 100 + int(update_id),
-            "from": {"id": int(sender)},
-            "chat": {"id": int(sender)},
-            "text": text,
-        },
+        "From": sender,
+        "To": "+15555550999",
+        "Body": body,
+        "MessageSid": sid,
+        "NumMedia": "1",
+        "MediaUrl0": "https://api.twilio.com/media/ME1",
+        "MediaContentType0": content_type,
     }
 
 
-def voice_message(*, sender: str = OWNER_ID, update_id: str = "1", caption: str = ""):
-    message = {
-        "message_id": 100 + int(update_id),
-        "from": {"id": int(sender)},
-        "chat": {"id": int(sender)},
-        "voice": {"file_id": "AwACAgEAAx", "duration": 3, "mime_type": "audio/ogg"},
-    }
-    if caption:
-        message["caption"] = caption
-    return {"update_id": int(update_id), "message": message}
+def signed_event(params, *, signature=None, token=AUTH_TOKEN, url=WEBHOOK_URL):
+    """An API Gateway event carrying a correctly signed Twilio webhook."""
+    import urllib.parse
 
+    from errand.channels import twilio
 
-def button_press(token: str, *, sender: str = OWNER_ID, update_id: str = "1",
-                 message_id: str = "500"):
+    sig = signature if signature is not None else twilio.expected_signature(token, url, params)
     return {
-        "update_id": int(update_id),
-        "callback_query": {
-            "id": "cbq1",
-            "from": {"id": int(sender)},
-            "data": token,
-            "message": {"message_id": int(message_id), "chat": {"id": int(sender)}},
+        "body": urllib.parse.urlencode(params),
+        "headers": {
+            twilio.SIGNATURE_HEADER: sig,
+            "Content-Type": "application/x-www-form-urlencoded",
         },
+        "isBase64Encoded": False,
     }
 
 
 def say(text: str):
-    """Shorthand: one typed message in, one Reply out."""
+    """Shorthand: one texted message in, one Reply out."""
     from errand.channels.base import Inbound
     from errand.dispatcher import conversation
 
-    return conversation.respond(Inbound(kind="text", text=text, sender_id=OWNER_ID))
+    return conversation.respond(Inbound(kind="text", text=text, sender_id=OWNER_NUMBER))
 
 
 def tap(token: str, *, message_id: str = "500"):
-    """Shorthand: one button press in, one Reply out."""
+    """Shorthand: one button token in, one Reply out.
+
+    SMS has no buttons, but the token path is what a richer channel uses and
+    it resolves to the same approval record, so it is worth keeping tested.
+    """
     from errand.channels.base import Inbound
     from errand.dispatcher import conversation
 
     return conversation.respond(
-        Inbound(kind="button", token=token, sender_id=OWNER_ID, message_id=message_id)
+        Inbound(kind="button", token=token, sender_id=OWNER_NUMBER, message_id=message_id)
     )
 
 
-def approve_token(reply) -> str:
-    """The Approve token from a reply's buttons."""
-    from errand.dispatcher import commands
-
+def hint_for(reply, label: str) -> str:
+    """The text Andrew would send for a given button."""
     for button in reply.buttons:
-        if button.token.startswith(f"{commands.VERB_FOR[commands.APPROVE]}:"):
-            return button.token
-    raise AssertionError(f"no Approve button in {[b.label for b in reply.buttons]}")
+        if button.label.lower().startswith(label.lower()):
+            return button.hint
+    raise AssertionError(f"no {label!r} button in {[b.label for b in reply.buttons]}")
 
 
-def button_labelled(reply, label: str) -> str:
+def token_for(reply, label: str) -> str:
     for button in reply.buttons:
         if button.label.lower().startswith(label.lower()):
             return button.token

@@ -1,13 +1,15 @@
-"""Parsing what Andrew sends.
+"""Parsing what Andrew texts.
 
 Command parsing is deliberately dumb and deterministic. Approving a send is
-not a place for a model to interpret intent: a tap on Approve means approve
-that one approval, and nothing else means it. Anything unrecognised falls
-through to the agent as free text, which is the safe direction - an
-unrecognised message starts a conversation, it does not authorise an action.
+not a place for a model to interpret intent: "T7 yes" means yes to T7 and
+nothing else means yes to T7. Anything unrecognised falls through to the agent
+as free text, which is the safe direction - an unrecognised message starts a
+conversation, it does not authorise an action.
 
-Button tokens have to fit in Telegram's 64-byte `callback_data`, so they are
-`<verb>:<approval id>` and the rest is looked up server side.
+Two ways in, one meaning. Over SMS Andrew types; over a channel with tappable
+buttons a token comes back instead. Both land on the same approval record, and
+`parse_button` exists now so that adding such a channel is a new file in
+`channels/` rather than a second command language.
 """
 
 from __future__ import annotations
@@ -37,14 +39,9 @@ STOP_ALL = "stop_all"
 HELP = "help"
 IGNORE = "ignore"
 
-# Button verbs, kept to one character so the token stays well inside 64 bytes.
-VERBS = {
-    "a": APPROVE,
-    "r": REJECT,
-    "e": EDIT,
-    "c": CONFIRM,
-    "u": UNDO,
-}
+# Button verbs, one character so a token stays far inside the 64-byte limit
+# the tightest channel imposes.
+VERBS = {"a": APPROVE, "r": REJECT, "e": EDIT, "c": CONFIRM, "u": UNDO}
 VERB_FOR = {kind: verb for verb, kind in VERBS.items()}
 APPROVE_ALL_TOKEN = "A:all"
 
@@ -54,6 +51,8 @@ class Command:
     kind: str
     task_id: str = ""
     approval_id: str = ""
+    indices: list[int] = field(default_factory=list)
+    all_pending: bool = False
     argument: str = ""
     amount_text: str = ""
     raw: str = ""
@@ -61,21 +60,18 @@ class Command:
 
 
 def button_token(kind: str, approval_id: str) -> str:
-    """Build a callback token. Raises if it would not fit."""
     verb = VERB_FOR.get(kind)
     if verb is None:
         raise ValueError(f"no button verb for {kind!r}")
     token = f"{verb}:{approval_id}"
     if len(token.encode()) > 64:
-        raise ValueError(f"callback token is {len(token.encode())} bytes, over Telegram's 64")
+        raise ValueError(f"callback token is {len(token.encode())} bytes, over the 64 limit")
     return token
 
 
 def parse_button(token: str) -> Command:
-    """Parse a callback token from a tapped button."""
     if token == APPROVE_ALL_TOKEN:
-        return Command(kind=APPROVE_ALL, raw=token)
-
+        return Command(kind=APPROVE_ALL, all_pending=True, raw=token)
     verb, _, approval_id = token.partition(":")
     kind = VERBS.get(verb)
     if kind is None or not approval_id:
@@ -86,6 +82,15 @@ def parse_button(token: str) -> Command:
 _YES = {"yes", "y", "ok", "okay", "go", "send", "approve", "do it", "confirm"}
 _NO = {"no", "n", "nope", "cancel", "reject", "decline", "don't", "dont"}
 _AMOUNT = re.compile(r"\$?\s*\d{1,7}(?:\.\d{1,2})?$")
+_INDEX_LIST = re.compile(r"^\d+(?:\s*[,&]\s*\d+)*$")
+
+_WORD_COMMANDS = {
+    LIST_TASKS: {"tasks", "task", "open", "open tasks", "list"},
+    PENDING: {"pending", "approvals", "waiting", "whats waiting", "what's waiting"},
+    RULES: {"rules", "my rules", "standing rules"},
+    BUDGET: {"budget", "spend", "cost"},
+    HELP: {"help", "?", "commands"},
+}
 
 
 def parse(text: str) -> Command:
@@ -97,17 +102,47 @@ def parse(text: str) -> Command:
 
     # The kill switch is checked first and matched loosely. If Andrew is
     # typing STOP ALL he is in a hurry and should not have to get it exact.
-    if collapsed.replace("!", "").replace(".", "").replace("/", "") in {
-        "stop all", "stopall", "halt", "halt all", "stop everything", "abort all"
+    if collapsed.replace("!", "").replace(".", "").lstrip("/") in {
+        "stop all", "stopall", "halt", "halt all", "stop everything", "abort all", "stop"
     }:
         return Command(kind=STOP_ALL, raw=raw)
 
-    if collapsed == "undo":
+    # Slash forms are accepted as aliases. They cost nothing and some phones
+    # autocomplete them.
+    bare = collapsed.lstrip("/")
+    bare = re.sub(r"^([a-z_]+)@\S+", r"\1", bare)
+
+    for kind, words in _WORD_COMMANDS.items():
+        if bare in words:
+            return Command(kind=kind, raw=raw)
+
+    if bare == "undo":
         return Command(kind=UNDO, raw=raw)
 
-    slash = _parse_slash(collapsed, raw)
-    if slash is not None:
-        return slash
+    status = re.match(r"^status\s+(\S+)$", bare)
+    if status:
+        task_id = ids.parse_task_id(status.group(1))
+        if task_id:
+            return Command(kind=STATUS, task_id=task_id, raw=raw)
+    if bare == "status":
+        return Command(kind=LIST_TASKS, raw=raw)
+
+    undo = re.match(r"^undo\s+(\S+)$", bare)
+    if undo:
+        return Command(kind=UNDO, task_id=ids.parse_task_id(undo.group(1)) or "", raw=raw)
+
+    disconnect = re.match(r"^disconnect\s+(gmail|calendar|google)$", bare)
+    if disconnect:
+        target = disconnect.group(1)
+        return Command(kind=DISCONNECT, argument="gmail" if target == "google" else target, raw=raw)
+
+    tighten = re.match(r"^tighten\s+(?:up\s+)?([a-z0-9_-]+)$", bare)
+    if tighten:
+        return Command(kind=TIGHTEN, argument=tighten.group(1), raw=raw)
+
+    batched = _parse_batch(bare, raw)
+    if batched is not None:
+        return batched
 
     targeted = _parse_task_text(collapsed, raw)
     if targeted is not None:
@@ -116,57 +151,34 @@ def parse(text: str) -> Command:
     return Command(kind=FREE_TEXT, raw=raw)
 
 
-def _parse_slash(collapsed: str, raw: str) -> Command | None:
-    if not collapsed.startswith("/"):
+def _parse_batch(bare: str, raw: str) -> Command | None:
+    """"yes all", "yes 1,3", "no 2" - the morning batch over SMS.
+
+    This is what a channel with buttons does with an "Approve all" button, and
+    it is the reason `pending` prints a numbered list: the numbers Andrew
+    replies with have to be the numbers he was shown.
+    """
+    match = re.match(r"^(yes|approve|ok|no|deny|decline|reject)\s+(all|[\d,&\s]+)$", bare)
+    if not match:
         return None
 
-    # Telegram appends @botname to commands in groups. Strip it.
-    body = re.sub(r"^/([a-z_]+)(@\S+)?", r"/\1", collapsed)
-    parts = body.split()
-    command, args = parts[0], parts[1:]
-    argument = " ".join(args).strip()
+    verb, target = match.group(1), match.group(2).strip()
+    kind = APPROVE if verb in {"yes", "approve", "ok"} else REJECT
 
-    if command in {"/tasks", "/task"}:
-        return Command(kind=LIST_TASKS, raw=raw)
-    if command in {"/pending", "/approvals"}:
-        return Command(kind=PENDING, raw=raw)
-    if command == "/rules":
-        return Command(kind=RULES, raw=raw)
-    if command == "/budget":
-        return Command(kind=BUDGET, raw=raw)
-    if command in {"/help", "/start"}:
-        return Command(kind=HELP, raw=raw)
-    if command == "/undo":
-        return Command(kind=UNDO, task_id=ids.parse_task_id(argument) or "", raw=raw)
-    if command == "/status":
-        task_id = ids.parse_task_id(argument) if argument else None
-        if task_id is None:
-            # "/status" with nothing after it is the task list, not an error.
-            return Command(kind=LIST_TASKS, raw=raw)
-        return Command(kind=STATUS, task_id=task_id, raw=raw)
-    if command == "/disconnect":
-        target = argument.strip()
-        if target in {"google", "gmail"}:
-            return Command(kind=DISCONNECT, argument="gmail", raw=raw)
-        if target == "calendar":
-            return Command(kind=DISCONNECT, argument="calendar", raw=raw)
-        return Command(kind=HELP, raw=raw)
-    if command == "/tighten":
-        if not argument:
-            return Command(kind=HELP, raw=raw)
-        return Command(kind=TIGHTEN, argument=argument.split()[0], raw=raw)
-    if command in {"/stop", "/stopall"}:
-        return Command(kind=STOP_ALL, raw=raw)
+    if target == "all":
+        return Command(kind=APPROVE_ALL if kind == APPROVE else kind,
+                       all_pending=True, raw=raw)
 
-    return Command(kind=HELP, raw=raw)
+    if not _INDEX_LIST.match(target):
+        return None
+    indices = sorted({int(part) for part in re.split(r"[,&\s]+", target) if part})
+    if not indices or any(i < 1 for i in indices):
+        return None
+    return Command(kind=kind, indices=indices, raw=raw)
 
 
 def _parse_task_text(collapsed: str, raw: str) -> Command | None:
-    """The typed forms: "T7 yes", "T7 yes $42.50", "T7 no", "T7 undo".
-
-    Buttons are the intended path, but a button on an old message stops being
-    tappable and typing is the fallback.
-    """
+    """"T7 yes", "T7 yes $42.50", "T7 no", "T7 status", "T7 undo", "T7 edit"."""
     match = re.match(r"^(t\d{1,6})\b\s*(.*)$", collapsed)
     if not match:
         return None
@@ -180,6 +192,8 @@ def _parse_task_text(collapsed: str, raw: str) -> Command | None:
         return Command(kind=STATUS, task_id=task_id, raw=raw)
     if rest == "undo":
         return Command(kind=UNDO, task_id=task_id, raw=raw)
+    if rest == "edit":
+        return Command(kind=EDIT, task_id=task_id, raw=raw)
 
     words = rest.split()
     head, tail = words[0], " ".join(words[1:]).strip()

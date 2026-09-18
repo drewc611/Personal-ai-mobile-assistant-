@@ -13,8 +13,9 @@ locals {
     ERRAND_RECEIPTS_BUCKET      = aws_s3_bucket.receipts.bucket
     ERRAND_TRANSCRIBE_BUCKET    = aws_s3_bucket.voice.bucket
     ERRAND_QUEUE_URL            = aws_sqs_queue.inbound.url
-    ERRAND_TELEGRAM_SECRET_ID   = aws_secretsmanager_secret.telegram.name
-    ERRAND_OWNER_TELEGRAM_ID    = var.owner_telegram_id
+    ERRAND_TWILIO_SECRET_ID     = aws_secretsmanager_secret.twilio.name
+    ERRAND_TWILIO_FROM          = var.twilio_from_number
+    ERRAND_OWNER_NUMBER         = var.owner_number
     ERRAND_DEFAULT_MODEL_ID     = var.default_model_id
     ERRAND_ESCALATION_MODEL_ID  = var.escalation_model_id
     ERRAND_READER_MODEL_ID      = var.reader_model_id
@@ -26,7 +27,7 @@ locals {
   }
 }
 
-resource "random_id" "sender_salt" {
+resource "random_id" "number_salt" {
   byte_length = 16
 }
 
@@ -41,7 +42,11 @@ resource "aws_lambda_function" "ingress" {
 
   environment {
     variables = merge(local.common_env, {
-      ERRAND_SENDER_SALT = random_id.sender_salt.hex
+      # The URL Twilio actually calls. Signature validation needs the exact
+      # string, and rebuilding it from the Lambda event gives the internal
+      # host, which fails every signature.
+      ERRAND_WEBHOOK_URL = "${aws_apigatewayv2_api.sms.api_endpoint}/sms"
+      ERRAND_NUMBER_SALT = random_id.number_salt.hex
     })
   }
 

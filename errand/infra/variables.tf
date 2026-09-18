@@ -4,14 +4,19 @@ variable "region" {
   default     = "us-east-1"
 }
 
-variable "owner_telegram_id" {
-  description = "Andrew's Telegram user id. The only sender the bot answers."
+variable "owner_number" {
+  description = "Andrew's mobile in E.164. The only number the system will answer."
   type        = string
 
   validation {
-    condition     = can(regex("^[0-9]{5,15}$", var.owner_telegram_id))
-    error_message = "owner_telegram_id must be a numeric Telegram user id."
+    condition     = can(regex("^\\+[1-9]\\d{6,14}$", var.owner_number))
+    error_message = "owner_number must be E.164, for example +15555550123."
   }
+}
+
+variable "twilio_from_number" {
+  description = "The Twilio number Errand texts from, E.164."
+  type        = string
 }
 
 variable "default_model_id" {

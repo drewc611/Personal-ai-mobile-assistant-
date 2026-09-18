@@ -1,12 +1,12 @@
-"""Voice notes.
+"""Voice memos.
 
-Andrew records a note while driving and sends it. The audio is his own voice,
+Andrew records a memo while driving and texts it. The audio is his own voice,
 not third-party content, so it does not go through the quarantined reader - it
 goes through transcription and then follows exactly the same path as a typed
 message, gate included.
 
 Fetching the audio is the Channel's job, so this file does not know whether it
-came from Telegram or, in v2, from a phone call.
+came from an MMS or, in v2, from a phone call.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from errand.common import clock, config, ids
 from errand.reader.schemas import clean_text
 from errand.store import audit_store
 
-MAX_BYTES = 20 * 1024 * 1024
+MAX_BYTES = 8 * 1024 * 1024
 POLL_SECONDS = 2
 DEFAULT_TIMEOUT = 45
 
@@ -42,7 +42,7 @@ class FakeTranscriber:
     def transcribe(self, audio: bytes, content_type: str) -> str:
         self.calls.append((len(audio), content_type))
         if not self.transcripts:
-            raise TranscriptionError("I could not make out that note")
+            raise TranscriptionError("I could not make out that memo")
         return self.transcripts.pop(0)
 
 
@@ -66,11 +66,12 @@ class AmazonTranscribe:
         if not self._bucket:
             raise TranscriptionError("no transcription bucket configured")
 
-        # Telegram voice notes are OGG/Opus; audio/* covers a forwarded file.
+        # Twilio transcodes recorded audio to MP3 or AMR depending on the
+        # handset; the rest are here for a forwarded file.
         suffix = {
-            "audio/ogg": "ogg", "audio/opus": "ogg", "audio/mpeg": "mp3",
-            "audio/mp4": "mp4", "audio/m4a": "mp4", "audio/wav": "wav",
-        }.get(content_type, "ogg")
+            "audio/mpeg": "mp3", "audio/mp4": "mp4", "audio/m4a": "mp4",
+            "audio/amr": "amr", "audio/ogg": "ogg", "audio/wav": "wav",
+        }.get(content_type, "mp3")
         job = f"errand-{ids.new_run_id()}"
         key = f"voice/{job}.{suffix}"
 
@@ -124,19 +125,19 @@ def get_transcriber() -> Transcriber:
     return _transcriber
 
 
-def transcribe_note(audio: bytes, content_type: str = "audio/ogg",
+def transcribe_memo(audio: bytes, content_type: str = "audio/mpeg",
                     *, task_id: str = "system") -> str:
-    """Turn a voice note into text. Raises TranscriptionError on anything that
+    """Turn a voice memo into text. Raises TranscriptionError on anything that
     should be reported to Andrew rather than retried."""
     audit_store.write(
         task_id=task_id,
         phase=audit_store.PHASE_BEFORE,
-        event="VOICE_NOTE_RECEIVED",
+        event="VOICE_MEMO_RECEIVED",
         detail={"content_type": content_type, "bytes": len(audio)},
     )
 
     if len(audio) > MAX_BYTES:
-        raise TranscriptionError("that note is too long; type it instead")
+        raise TranscriptionError("that memo is too long; text me instead")
 
     text = get_transcriber().transcribe(audio, content_type)
     cleaned = clean_text(text, 1200)
@@ -144,11 +145,11 @@ def transcribe_note(audio: bytes, content_type: str = "audio/ogg",
     audit_store.write(
         task_id=task_id,
         phase=audit_store.PHASE_AFTER,
-        event="VOICE_NOTE_TRANSCRIBED",
+        event="VOICE_MEMO_TRANSCRIBED",
         outcome="OK" if cleaned else "EMPTY",
         detail={"chars": len(cleaned)},
         sequence=1,
     )
     if not cleaned:
-        raise TranscriptionError("I could not make out that note")
+        raise TranscriptionError("I could not make out that memo")
     return cleaned

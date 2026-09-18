@@ -34,7 +34,7 @@ class Task:
     created_at: str = ""
     updated_at: str = ""
     last_message: str = ""
-    source: str = "telegram"
+    source: str = "sms"
     notes: list[str] = field(default_factory=list)
 
     def to_item(self) -> dict[str, Any]:
@@ -55,7 +55,7 @@ class Task:
             created_at=item.get("created_at", ""),
             updated_at=item.get("updated_at", ""),
             last_message=item.get("last_message", ""),
-            source=item.get("source", "telegram"),
+            source=item.get("source", "sms"),
             notes=json.loads(notes) if isinstance(notes, str) else list(notes),
         )
 
@@ -68,7 +68,7 @@ def _next_number() -> int:
     return counters.next_value(_table(), "tasks")
 
 
-def create(title: str, *, task_type: str = "general", source: str = "telegram") -> Task:
+def create(title: str, *, task_type: str = "general", source: str = "sms") -> Task:
     number = _next_number()
     task = Task(
         task_id=ids.format_task_id(number),

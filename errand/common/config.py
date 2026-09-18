@@ -1,7 +1,7 @@
 """Runtime configuration for Errand.
 
 Everything here comes from the environment. Nothing is a secret: secret
-*values* live in Secrets Manager and are fetched at call time (hard rule 6).
+*values* live in Secrets Manager and are fetched at call time (hard rule 7).
 What lives here is the name of a secret, the table names, the model ids, and
 the budget.
 
@@ -77,13 +77,15 @@ class Config:
     receipts_bucket: str = ""
     transcribe_bucket: str = ""
     queue_url: str = ""
-    telegram_secret_id: str = "errand/telegram"
-    owner_telegram_id: str = ""
+    twilio_secret_id: str = "errand/twilio"
+    twilio_from_number: str = ""
+    owner_number: str = ""
     approval_ttl_seconds: int = 3600
     undo_seconds: int = 60
     tier3_cap_cents: int = 0
     monthly_budget_usd: float = 0.0
-    message_char_limit: int = 3500
+    segment_chars: int = 300
+    max_segments: int = 4
 
     def table(self, name: str) -> str:
         try:
@@ -108,8 +110,9 @@ def load() -> Config:
         receipts_bucket=_optional("ERRAND_RECEIPTS_BUCKET"),
         transcribe_bucket=_optional("ERRAND_TRANSCRIBE_BUCKET"),
         queue_url=_optional("ERRAND_QUEUE_URL"),
-        telegram_secret_id=_optional("ERRAND_TELEGRAM_SECRET_ID", "errand/telegram"),
-        owner_telegram_id=_optional("ERRAND_OWNER_TELEGRAM_ID"),
+        twilio_secret_id=_optional("ERRAND_TWILIO_SECRET_ID", "errand/twilio"),
+        twilio_from_number=_optional("ERRAND_TWILIO_FROM"),
+        owner_number=_optional("ERRAND_OWNER_NUMBER"),
         approval_ttl_seconds=_int("ERRAND_APPROVAL_TTL_SECONDS", 3600),
         # Tier 2 and 3 actions wait this long, with an Undo button, before
         # they execute.
@@ -118,8 +121,10 @@ def load() -> Config:
         tier3_cap_cents=_int("ERRAND_TIER3_CAP_CENTS", 0),
         # 0 means no budget has been chosen, and every model call is refused.
         monthly_budget_usd=_float("ERRAND_MONTHLY_BUDGET_USD", 0.0),
-        # Telegram's own limit is 4096 characters per message.
-        message_char_limit=_int("ERRAND_MESSAGE_CHAR_LIMIT", 3500),
+        # A GSM-7 SMS segment is 153 characters once concatenated. 300 keeps a
+        # part to two segments; four parts is the most worth sending at once.
+        segment_chars=_int("ERRAND_SEGMENT_CHARS", 300),
+        max_segments=_int("ERRAND_MAX_SEGMENTS", 4),
     )
 
 

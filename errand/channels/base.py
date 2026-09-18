@@ -1,13 +1,18 @@
 """The Channel interface.
 
-Every message in or out goes through this. Telegram is the only v0
-implementation; Twilio SMS and voice arrive in v2 and should need no change to
-the agent, the gate, or the conversation handler. The way to keep that true is
-to make sure nothing outside `channels/` ever mentions Telegram.
+Every message in or out goes through this. Twilio SMS is the only v0
+implementation; WhatsApp is the same Twilio API with a prefix on the number,
+and a richer channel with real tappable buttons would be another
+implementation and no change to the agent, the gate, or the conversation
+handler. The way to keep that true is that nothing outside `channels/`
+mentions Twilio.
 
-`send_buttons` is the one method that is not obviously channel-agnostic.
-Telegram renders it as an inline keyboard; SMS will render the same buttons as
-"reply T7 yes". The caller supplies labels and tokens and does not care which.
+`Button` is the piece that makes a channel-agnostic approval possible. It
+carries two things: a `token`, for a channel that can render something
+tappable, and a `reply`, which is the text Andrew sends instead on a channel
+that cannot. SMS uses the second. Neither is ever trusted on its own - a
+tapped token and a typed reply both land on the same approval record, and the
+gate does not care which arrived.
 """
 
 from __future__ import annotations
@@ -21,17 +26,23 @@ from typing import Any, Protocol
 class Button:
     """One action offered to Andrew.
 
-    `token` is what comes back when he taps it. Telegram caps callback data at
-    64 bytes, so it stays short and is resolved server side rather than
-    carrying a description.
+    `token` is what comes back from a tap. It stays under 64 bytes because
+    that is the tightest limit among the channels this will plug into, and a
+    token that fits everywhere is one less thing to rediscover later.
     """
 
     label: str
     token: str
+    reply: str = ""          # what to type on a channel without buttons
 
     def __post_init__(self) -> None:
         if not self.token or len(self.token.encode()) > 64:
             raise ValueError(f"button token must be 1-64 bytes, got {len(self.token.encode())}")
+
+    @property
+    def hint(self) -> str:
+        """How a text-only channel offers this."""
+        return self.reply or self.label
 
 
 @dataclass
@@ -55,7 +66,7 @@ class Channel(Protocol):
 
     def send_buttons(self, text: str, buttons: list[Button]) -> str: ...
 
-    def send_file(self, path: str, caption: str = "") -> str: ...
+    def send_file(self, url: str, caption: str = "") -> str: ...
 
     def acknowledge(self, inbound: Inbound, note: str = "") -> None: ...
 
@@ -64,8 +75,9 @@ class Channel(Protocol):
     def fetch_voice(self, voice_ref: str) -> bytes: ...
 
 
-# Hard rule 9: Telegram bot chats are not end to end encrypted. Nothing that
-# would be damaging in a leaked chat log goes out over one.
+# Hard rule 9: SMS is not encrypted end to end, and a carrier, a phone on a
+# table, and a lock screen preview are all places these end up. Nothing that
+# would be damaging in a leaked message goes out over one.
 _CARD = re.compile(r"\b(?:\d[ -]?){12,15}\d\b")
 _OTP = re.compile(r"\b(?:code|otp|pin|2fa|verification code)\b[^\d]{0,12}(\d{4,8})\b", re.I)
 _PASSWORD = re.compile(r"\b(?:password|passcode|passphrase)\b\s*[:=]\s*\S+", re.I)
@@ -76,7 +88,7 @@ def mask_sensitive(text: str) -> str:
 
     This is a backstop, not a licence. The rule is that Errand does not handle
     these at all; this catches the case where one arrives inside content it is
-    summarising and would otherwise be repeated back into the chat.
+    summarising and would otherwise be repeated back into the thread.
     """
 
     def mask_card(match: re.Match[str]) -> str:
@@ -91,30 +103,62 @@ def mask_sensitive(text: str) -> str:
     return masked
 
 
-def split_message(text: str, limit: int) -> list[str]:
-    """Split on line boundaries so a long reply is readable in order."""
+def render_buttons(text: str, buttons: list[Button]) -> str:
+    """Turn a set of buttons into the line a text-only channel sends.
+
+    Deduplicated and ordered, because "Reply T7 yes to send, T7 no to drop" is
+    read once at a glance and a repeated hint makes it ambiguous.
+    """
+    hints: list[str] = []
+    for button in buttons:
+        hint = button.hint
+        if hint and hint not in hints:
+            hints.append(hint)
+    if not hints:
+        return text
+    quoted = ", ".join(f'"{h}"' for h in hints)
+    return f"{text}\nReply {quoted}.".strip()
+
+
+def split_message(text: str, limit: int, max_parts: int) -> list[str]:
+    """Split a reply into numbered parts on line boundaries.
+
+    Carriers reorder concatenated segments often enough that a long reply
+    arrives scrambled, so parts are numbered and there is a hard ceiling on
+    how many go out at once.
+    """
     body = text.strip()
     if not body:
         return []
     if len(body) <= limit:
         return [body]
 
+    room = limit - 8  # space for the "(1/3) " prefix
     parts: list[str] = []
     current = ""
     for line in body.splitlines():
         candidate = f"{current}\n{line}" if current else line
-        if len(candidate) <= limit:
+        if len(candidate) <= room:
             current = candidate
             continue
         if current:
             parts.append(current)
-        while len(line) > limit:
-            parts.append(line[:limit])
-            line = line[limit:]
+        while len(line) > room:
+            parts.append(line[:room])
+            line = line[room:]
         current = line
     if current:
         parts.append(current)
-    return parts
+
+    if len(parts) > max_parts:
+        parts = parts[: max_parts - 1] + [
+            parts[max_parts - 1][: room - 40].rstrip() + '\n...reply "tasks" for the rest.'
+        ]
+
+    total = len(parts)
+    if total == 1:
+        return parts
+    return [f"({i}/{total}) {p}" for i, p in enumerate(parts, 1)]
 
 
 @dataclass
@@ -134,7 +178,7 @@ class RecordingChannel:
 
     def send_text(self, text: str) -> list[str]:
         sent = []
-        for part in split_message(mask_sensitive(text), 3500):
+        for part in split_message(mask_sensitive(text), 300, 4):
             self._seq += 1
             self.texts.append(part)
             sent.append(str(self._seq))
@@ -143,11 +187,12 @@ class RecordingChannel:
     def send_buttons(self, text: str, buttons: list[Button]) -> str:
         self._seq += 1
         self.button_messages.append((mask_sensitive(text), list(buttons)))
+        self.send_text(render_buttons(text, buttons))
         return str(self._seq)
 
-    def send_file(self, path: str, caption: str = "") -> str:
+    def send_file(self, url: str, caption: str = "") -> str:
         self._seq += 1
-        self.files.append((path, caption))
+        self.files.append((url, caption))
         return str(self._seq)
 
     def acknowledge(self, inbound: Inbound, note: str = "") -> None:
@@ -165,15 +210,8 @@ class RecordingChannel:
         return self.texts[-1] if self.texts else ""
 
     @property
-    def last_buttons(self) -> list[Button]:
-        return self.button_messages[-1][1] if self.button_messages else []
-
-    @property
     def all_output(self) -> str:
-        return "\n".join(self.texts + [t for t, _ in self.button_messages])
-
-    def tokens(self) -> list[str]:
-        return [b.token for _, buttons in self.button_messages for b in buttons]
+        return "\n".join(self.texts)
 
 
 _channel: Channel | None = None
@@ -187,7 +225,7 @@ def set_channel(channel: Channel | None) -> None:
 def get_channel() -> Channel:
     global _channel
     if _channel is None:
-        from errand.channels import telegram
+        from errand.channels import twilio
 
-        _channel = telegram.build_from_secrets()
+        _channel = twilio.build_from_secrets()
     return _channel

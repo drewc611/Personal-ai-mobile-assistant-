@@ -1,13 +1,13 @@
 """The dispatcher Lambda.
 
-Reads one update off the FIFO queue, turns it into a reply, sends the reply
-through the Channel. Voice notes are transcribed first and then handled as if
+Reads one message off the FIFO queue, turns it into a reply, sends the reply
+through the Channel. Voice memos are transcribed first and then handled as if
 Andrew had typed them.
 
-The queue is FIFO with a single message group, so updates are processed in the
-order they arrived. That ordering is not a nicety: an Approve arriving before
-the task that created it would approve nothing, and an Approve arriving after
-a STOP ALL would be a real problem.
+The queue is FIFO with a single message group, so messages are processed in
+the order they were sent. That ordering is not a nicety: "T7 yes" arriving
+before the message that created T7 would approve nothing, and an approval
+arriving after a STOP ALL would be a real problem.
 """
 
 from __future__ import annotations
@@ -72,15 +72,23 @@ def handle_one(message: dict[str, Any]) -> conversation.Reply:
         else:
             try:
                 audio = channel.fetch_voice(inbound.voice_ref)
-                spoken = voice.transcribe_note(
-                    audio, str(inbound.raw.get("mime_type") or "audio/ogg")
+                spoken = voice.transcribe_memo(
+                    audio, str(inbound.raw.get("mime_type") or "audio/mpeg")
                 )
             except Exception as exc:  # noqa: BLE001
                 note = str(exc) if isinstance(exc, voice.TranscriptionError) else (
-                    "I could not fetch that voice note."
+                    "I could not fetch that voice memo."
                 )
                 channel.send_text(note)
                 return conversation.Reply(note)
+
+            # Once the audio is in Andrew's own bucket, the provider should
+            # not keep a copy. Best effort: failing to delete is worth a log
+            # line, not worth failing the task over.
+            deleter = getattr(channel, "delete_media", None)
+            if callable(deleter):
+                deleter(inbound.voice_ref)
+
             prefix = f'Heard: "{spoken[:150]}"\n'
             inbound = Inbound(kind="text", text=spoken, sender_id=inbound.sender_id,
                               message_id=inbound.message_id, update_id=inbound.update_id)

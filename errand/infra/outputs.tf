@@ -1,11 +1,6 @@
 output "webhook_url" {
-  description = <<-EOT
-    Register this with Telegram, together with a secret you generate:
-      curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
-        -d url=<this value> \
-        -d secret_token=<the same value stored in errand/telegram>
-  EOT
-  value = "${aws_apigatewayv2_api.telegram.api_endpoint}/telegram"
+  description = "Set this as the messaging webhook on the Twilio number."
+  value       = "${aws_apigatewayv2_api.sms.api_endpoint}/sms"
 }
 
 output "queue_url" {
@@ -29,9 +24,9 @@ output "agent_role_arn" {
   value       = aws_iam_role.agent.arn
 }
 
-output "telegram_secret_id" {
-  description = "Put bot_token and webhook_secret here; Terraform never sees them."
-  value       = aws_secretsmanager_secret.telegram.name
+output "twilio_secret_id" {
+  description = "Put the account sid and auth token here; Terraform never sees them."
+  value       = aws_secretsmanager_secret.twilio.name
 }
 
 output "configuration_warnings" {
