@@ -1,0 +1,76 @@
+name: deploy
+
+# Never on a push. A deploy is a decision, so it is made by a person pressing
+# the button, and then again by a person approving the environment.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Apply the plan. Leave false for a plan-only dry run."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  # The only extra permission this workflow gets, and the whole point of it:
+  # requesting the OIDC token that AWS trades for a session. There is no AWS
+  # secret stored anywhere in this repository.
+  id-token: write
+
+concurrency:
+  # Never two applies at once. Not cancel-in-progress: interrupting terraform
+  # mid-apply leaves state and reality disagreeing.
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # The trust policy on the role names this environment. A workflow running
+    # anywhere else cannot get credentials at all, however it is triggered.
+    # Add yourself as a required reviewer and nothing deploys unapproved.
+    environment: production
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.5"
+
+      # Fail before touching AWS if the settings that are meant to refuse are
+      # still refusing. Cheaper to find out here than half way through apply.
+      - name: Preflight the configuration
+        run: python scripts/preflight.py errand/infra/terraform.tfvars
+
+      - name: Build the Lambda artifact
+        run: make -C errand build BIN=$(dirname $(which python))
+
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE }}
+          aws-region: us-east-1
+          role-session-name: errand-deploy-${{ github.run_id }}
+
+      - name: Who are we
+        run: aws sts get-caller-identity
+
+      - name: Init
+        run: terraform -chdir=errand/infra init -backend-config=backend.hcl -input=false
+
+      - name: Plan
+        run: terraform -chdir=errand/infra plan -input=false -out=tfplan
+
+      - name: Apply
+        if: inputs.apply
+        run: terraform -chdir=errand/infra apply -input=false -auto-approve tfplan
+
+      - name: What exists now
+        if: inputs.apply
+        run: terraform -chdir=errand/infra output

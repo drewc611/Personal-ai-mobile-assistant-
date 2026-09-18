@@ -202,21 +202,50 @@ knowing about:
 
 ## Deploying
 
+No AWS credential is stored anywhere in this repository, and none is needed.
+GitHub Actions gets a short-lived session by presenting an OIDC token that AWS
+trades for one; the role it assumes trusts exactly one repository and one
+environment, and that environment can require your approval before the job
+starts.
+
+**Once, by hand, with your own admin session:**
+
 ```bash
-cd errand && make check          # lint, terraform fmt/validate, tests
-make build                       # -> build/errand.zip, must stay under 50MB
-cd infra
-cp terraform.tfvars.example terraform.tfvars   # fill it in
+cd errand/infra/bootstrap
 terraform init && terraform apply
 ```
 
-The Lambda zip carries `requirements-lambda.txt` (boto3 and the `errand`
-package) and not `requirements.txt`. Strands and the AgentCore SDK are the
-agent container's dependencies; the Lambdas never load a model, and bundling
-them put the zip over Lambda's 50MB direct-upload limit. `make build` fails
-if the artifact grows past it.
+That creates the GitHub OIDC trust, the `errand-deploy` role, a permissions
+boundary, and the remote state bucket. It prints what to do next. The three
+steps it names are: create the `production` environment with yourself as a
+required reviewer, add `AWS_DEPLOY_ROLE` as a repository *variable* (an ARN is
+not a secret), and write `backend.hcl`.
 
-Then, in this order:
+**Why a permissions boundary.** The deploy role has to create IAM roles —
+Errand has four. `iam:CreateRole` next to `PutRolePolicy` and `PassRole` is
+ordinarily a path straight to account admin: make a role with
+`AdministratorAccess`, attach it to a Lambda, invoke the Lambda. The boundary
+is a ceiling that any role created by the deploy role can never exceed, the
+deploy role may only create roles that carry it, and it is explicitly denied
+the ability to take it off again or to edit itself. `infra/bootstrap/boundary.tf`
+is therefore the real answer to "how much can the deploy credential ultimately
+do".
+
+**Then, to deploy:** Actions → deploy → Run workflow. Leave `apply` false for a
+plan-only dry run; set it true to apply. It refuses before touching AWS if the
+configuration is not finished:
+
+```bash
+make -C errand preflight     # the same check, locally
+```
+
+Three settings deliberately refuse to act while they are zero, and preflight
+names them rather than letting you find out from a deployed assistant that
+answers everything with "no budget is set": `monthly_budget_usd`,
+`tier3_cap_cents`, and `model_rates_json`. It also catches a model id that has
+no price entry, which would make every call routed to it refuse as unpriced.
+
+**Still yours to do by hand**, because they are not AWS:
 
 1. **Secrets.** Terraform creates the secret containers and never the values,
    because Terraform state is a file on disk.
@@ -249,12 +278,6 @@ Then, in this order:
    a silent downgrade rather than an error.
 
 Real texting is blocked until US A2P 10DLC registration completes.
-
-Three settings refuse to act while zero, deliberately rather than as
-placeholders: `monthly_budget_usd` (every model call refused),
-`tier3_cap_cents` (every purchase refused), and `model_rates_json` (the budget
-cannot price a call, so calls are refused). `terraform output
-configuration_warnings` lists whichever are still unset.
 
 ## Repository and CI
 

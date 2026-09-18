@@ -11,3 +11,7 @@ build/
 *.tfstate.*
 terraform.tfvars
 crash.log
+
+# Account-specific backend config and the bootstrap's local state.
+errand/infra/backend.hcl
+errand/infra/bootstrap/.terraform.lock.hcl

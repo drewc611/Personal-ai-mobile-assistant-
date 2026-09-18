@@ -2,7 +2,7 @@ PY ?= python3.12
 VENV ?= .venv
 BIN = $(VENV)/bin
 
-.PHONY: venv test lint fmt injection acceptance check tf-fmt tf-check tf-validate build size clean
+.PHONY: venv test lint fmt injection acceptance check preflight tf-fmt tf-check tf-validate build size clean
 
 venv:
 	$(PY) -m venv $(VENV)
@@ -19,10 +19,10 @@ acceptance:
 	cd .. && $(CURDIR)/$(BIN)/python -m pytest errand/tests/acceptance -m acceptance
 
 lint:
-	cd .. && $(CURDIR)/$(BIN)/ruff check errand/
+	cd .. && $(CURDIR)/$(BIN)/ruff check errand/ scripts/
 
 fmt:
-	cd .. && $(CURDIR)/$(BIN)/ruff check --fix errand/ && terraform -chdir=infra fmt -recursive
+	cd .. && $(CURDIR)/$(BIN)/ruff check --fix errand/ scripts/ && terraform -chdir=infra fmt -recursive
 
 # The same two terraform commands CI runs, in the same order. `terraform fmt`
 # is picky about alignment inside a block and there is no way to get it right
@@ -40,6 +40,10 @@ tf-validate:
 
 # Everything CI checks, locally.
 check: lint tf-check tf-validate test
+
+# Is the configuration actually finished? Run before deploying.
+preflight:
+	$(PY) ../scripts/preflight.py infra/terraform.tfvars
 
 # The Lambda zip. Two things this deliberately does not do:
 #

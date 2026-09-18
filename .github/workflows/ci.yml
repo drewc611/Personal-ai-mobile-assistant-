@@ -37,7 +37,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Lint
-        run: ruff check errand/
+        run: ruff check errand/ scripts/
 
       - name: Unit tests
         run: pytest errand/tests/unit

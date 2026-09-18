@@ -78,6 +78,39 @@ that was committed and later removed is still a leaked secret. If this repo
 ever moves under an organisation, gitleaks-action requires a licence key there;
 it is free for a user-owned repository.
 
+## Deploy credentials
+
+There is no AWS credential in this repository, and no long-lived one anywhere
+— CLAUDE.md rule 7 says never long-lived access keys, and that includes the
+ones used to deploy.
+
+GitHub Actions authenticates by presenting a short-lived OIDC token that AWS
+exchanges for a session. The role's trust policy pins two claims: the audience
+(`sts.amazonaws.com`) and the subject
+(`repo:<owner>/<repo>:environment:production`). Pinning to the repository alone
+would let any workflow in it assume the role, including one added by a pull
+request; pinning to the environment means the job has to be running in an
+environment that can require a human to approve it first. Sessions last at most
+an hour, and revoking access is deleting one role.
+
+**The permissions boundary is the part that matters.** A deploy role for this
+stack must be able to create IAM roles, and `iam:CreateRole` alongside
+`PutRolePolicy` and `PassRole` is ordinarily equivalent to account admin:
+create a role with `AdministratorAccess`, attach it to a Lambda, invoke it. So:
+
+- Everything the deploy role creates must carry `errand-permissions-boundary`,
+  enforced by an `iam:PermissionsBoundary` condition on `CreateRole`.
+- That boundary explicitly denies `iam:*`, `organizations:*` and `sts:AssumeRole`,
+  so a created role cannot climb out of it.
+- The deploy role is explicitly denied `DeleteRolePermissionsBoundary`,
+  `CreatePolicyVersion` on the boundary, and any `iam:*` against itself. An
+  explicit Deny cannot be overridden by any Allow.
+- Its IAM reach is confined to `role/errand-*`, and `PassRole` is conditioned
+  on the three services that legitimately run these roles.
+
+`errand/infra/bootstrap/boundary.tf` is therefore the honest answer to how much
+the deploy credential can ultimately do.
+
 ## Supply chain
 
 - Every GitHub Action is pinned to a **commit SHA**, not a tag. A tag is a
