@@ -54,6 +54,25 @@ Nothing secret is in this repository, and CI checks that on every push:
 - Terraform creates the secret *containers* and never the values, because
   Terraform state is a file on disk.
 
+### Secrets and AI coding agents
+
+An agent with shell or AWS access can call `get-secret-value` and pull a
+plaintext secret straight into its context window, where it lands in the
+transcript, the logs, and any downstream tool call. That is a different leak
+path from the one this repo's design covers: Errand's own Lambda calling
+Secrets Manager at runtime is correct and unaffected. The exposure is the
+human-and-agent workflow *around* it, and the deploy steps in the README are
+written to avoid it — the Twilio token is read interactively and never appears
+in a command line.
+
+For a structural version of the same thing, the `aws-core` plugin from the
+[Agent Toolkit for AWS](https://github.com/aws/agent-toolkit-for-aws) adds a
+`PreToolUse` hook that blocks `get-secret-value` outright and teaches the agent
+to use `{{resolve:secretsmanager:...}}` references via `asm-exec`, so the
+plaintext only ever exists in a child process. AWS is explicit that this is
+"a best-effort defense, not a security boundary" — it closes the common path,
+not every path, and does not replace least-privilege IAM or CloudTrail.
+
 `gitleaks` scans the full history on every push, not just the diff — a secret
 that was committed and later removed is still a leaked secret. If this repo
 ever moves under an organisation, gitleaks-action requires a licence key there;

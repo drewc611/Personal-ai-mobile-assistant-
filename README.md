@@ -221,9 +221,21 @@ Then, in this order:
 1. **Secrets.** Terraform creates the secret containers and never the values,
    because Terraform state is a file on disk.
    ```bash
+   # Read interactively so the token never lands in shell history, an agent
+   # transcript, or the process list. `read -rs` does not echo; the value
+   # reaches the CLI through a file that only you can read and is then shredded.
+   umask 077
+   read -rsp "Twilio account SID: " SID; echo
+   read -rsp "Twilio auth token:  " TOKEN; echo
+   jq -nc --arg s "$SID" --arg t "$TOKEN" '{account_sid:$s,auth_token:$t}' > twilio.json
+   unset SID TOKEN
    aws secretsmanager put-secret-value --secret-id errand/twilio \
-     --secret-string '{"account_sid":"AC...","auth_token":"..."}'
+     --secret-string file://twilio.json
+   shred -u twilio.json 2>/dev/null || rm -f twilio.json
    ```
+   Pasting the token straight into `--secret-string` puts it in `~/.bash_history`
+   and, if an AI coding agent is driving the terminal, in its context window and
+   transcript. See `SECURITY.md` for the hook that blocks that class of mistake.
 2. **Webhook.** Set `terraform output -raw webhook_url` as the messaging
    webhook on the Twilio number. The URL is also configured on the Lambda,
    because signature validation needs the exact string Twilio called and
