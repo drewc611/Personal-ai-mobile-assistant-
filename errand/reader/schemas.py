@@ -64,7 +64,7 @@ def clean_text(value: str, max_len: int) -> str:
 
     This is not an injection defence - the defence is that the reader has no
     tools and the planner has a gate. This is hygiene, so that what a human
-    reads in an SMS is what is actually in the field.
+    reads in a reply is what is actually in the field.
     """
     text = unicodedata.normalize("NFKC", str(value))
     text = _INVISIBLE.sub("", text)

@@ -26,7 +26,7 @@ RETENTION_DAYS = 30
 
 
 def _table() -> str:
-    return config.load().content_table
+    return config.load().table("content")
 
 
 def store(

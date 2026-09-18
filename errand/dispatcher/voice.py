@@ -1,36 +1,31 @@
-"""Voice memos in.
+"""Voice notes.
 
-Andrew records a note while driving and texts it. The audio is Andrew's own
-voice, not third-party content, so it does not go through the quarantined
-reader - it goes through transcription and then follows exactly the same path
-as a typed message, gate included.
+Andrew records a note while driving and sends it. The audio is his own voice,
+not third-party content, so it does not go through the quarantined reader - it
+goes through transcription and then follows exactly the same path as a typed
+message, gate included.
 
-The media has to be fetched from Twilio with the account credentials and
-copied into Andrew's own bucket before transcription, because a Twilio media
-URL is a public-ish link that stays live until the message is deleted. Errand
-deletes the Twilio copy once it has its own.
+Fetching the audio is the Channel's job, so this file does not know whether it
+came from Telegram or, in v2, from a phone call.
 """
 
 from __future__ import annotations
 
-import base64
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from errand.common import clock, config, ids, secrets
+from errand.common import clock, config, ids
 from errand.reader.schemas import clean_text
 from errand.store import audit_store
 
-MAX_BYTES = 8 * 1024 * 1024
+MAX_BYTES = 20 * 1024 * 1024
 POLL_SECONDS = 2
 DEFAULT_TIMEOUT = 45
 
 
 class TranscriptionError(RuntimeError):
-    """The memo could not be turned into text."""
+    """The note could not be turned into text."""
 
 
 class Transcriber(Protocol):
@@ -47,7 +42,7 @@ class FakeTranscriber:
     def transcribe(self, audio: bytes, content_type: str) -> str:
         self.calls.append((len(audio), content_type))
         if not self.transcripts:
-            raise TranscriptionError("no transcript queued")
+            raise TranscriptionError("I could not make out that note")
         return self.transcripts.pop(0)
 
 
@@ -55,9 +50,8 @@ class AmazonTranscribe:
     """Amazon Transcribe, batch mode.
 
     Batch rather than streaming because the audio already exists as a file by
-    the time we see it; there is nothing to stream. The job is polled with a
-    bounded wait so a stuck job fails the task instead of holding the SQS
-    message until it redelivers.
+    the time we see it. The job is polled with a bounded wait so a stuck job
+    fails the task instead of holding the SQS message until it redelivers.
     """
 
     def __init__(self, region: str, bucket: str, timeout: int = DEFAULT_TIMEOUT) -> None:
@@ -72,8 +66,11 @@ class AmazonTranscribe:
         if not self._bucket:
             raise TranscriptionError("no transcription bucket configured")
 
-        suffix = {"audio/mpeg": "mp3", "audio/mp4": "mp4", "audio/amr": "amr",
-                  "audio/ogg": "ogg", "audio/wav": "wav"}.get(content_type, "mp3")
+        # Telegram voice notes are OGG/Opus; audio/* covers a forwarded file.
+        suffix = {
+            "audio/ogg": "ogg", "audio/opus": "ogg", "audio/mpeg": "mp3",
+            "audio/mp4": "mp4", "audio/m4a": "mp4", "audio/wav": "wav",
+        }.get(content_type, "ogg")
         job = f"errand-{ids.new_run_id()}"
         key = f"voice/{job}.{suffix}"
 
@@ -127,65 +124,31 @@ def get_transcriber() -> Transcriber:
     return _transcriber
 
 
-def fetch_twilio_media(url: str) -> bytes:
-    """Twilio media needs the account credentials; the URL alone is not enough
-    on an account configured to require them, and it should be."""
-    creds = secrets.twilio_credentials()
-    basic = base64.b64encode(f"{creds['account_sid']}:{creds['auth_token']}".encode()).decode()
-    request = urllib.request.Request(url)
-    request.add_header("Authorization", f"Basic {basic}")
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            return response.read(MAX_BYTES + 1)
-    except urllib.error.HTTPError as exc:
-        raise TranscriptionError(f"could not fetch the memo: HTTP {exc.code}") from exc
-    except urllib.error.URLError as exc:
-        raise TranscriptionError(f"could not fetch the memo: {exc.reason}") from exc
-
-
-def delete_twilio_media(url: str) -> bool:
-    """Once the audio is in Andrew's bucket, Twilio should not keep a copy."""
-    creds = secrets.twilio_credentials()
-    basic = base64.b64encode(f"{creds['account_sid']}:{creds['auth_token']}".encode()).decode()
-    request = urllib.request.Request(url, method="DELETE")
-    request.add_header("Authorization", f"Basic {basic}")
-    try:
-        urllib.request.urlopen(request, timeout=15).close()
-        return True
-    except (urllib.error.HTTPError, urllib.error.URLError):
-        return False
-
-
-def transcribe_memo(media: list[dict[str, str]], *, task_id: str = "system") -> str:
-    """Turn the first audio attachment into text. Returns "" when there is none."""
-    audio = [m for m in media if str(m.get("content_type", "")).startswith("audio/")]
-    if not audio:
-        return ""
-
-    item = audio[0]
+def transcribe_note(audio: bytes, content_type: str = "audio/ogg",
+                    *, task_id: str = "system") -> str:
+    """Turn a voice note into text. Raises TranscriptionError on anything that
+    should be reported to Andrew rather than retried."""
     audit_store.write(
         task_id=task_id,
         phase=audit_store.PHASE_BEFORE,
-        event="VOICE_MEMO_RECEIVED",
-        detail={"content_type": item.get("content_type", "")},
+        event="VOICE_NOTE_RECEIVED",
+        detail={"content_type": content_type, "bytes": len(audio)},
     )
 
-    payload = fetch_twilio_media(item["url"])
-    if len(payload) > MAX_BYTES:
-        raise TranscriptionError("that memo is too long; text me instead")
+    if len(audio) > MAX_BYTES:
+        raise TranscriptionError("that note is too long; type it instead")
 
-    text = get_transcriber().transcribe(payload, item.get("content_type", "audio/mpeg"))
-    delete_twilio_media(item["url"])
-
+    text = get_transcriber().transcribe(audio, content_type)
     cleaned = clean_text(text, 1200)
+
     audit_store.write(
         task_id=task_id,
         phase=audit_store.PHASE_AFTER,
-        event="VOICE_MEMO_TRANSCRIBED",
+        event="VOICE_NOTE_TRANSCRIBED",
         outcome="OK" if cleaned else "EMPTY",
         detail={"chars": len(cleaned)},
         sequence=1,
     )
     if not cleaned:
-        raise TranscriptionError("I could not make out that memo")
+        raise TranscriptionError("I could not make out that note")
     return cleaned

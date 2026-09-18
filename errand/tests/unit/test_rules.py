@@ -9,7 +9,7 @@ from errand.dispatcher import conversation
 from errand.policy import rules
 from errand.policy.tiers import Tier
 from errand.store import tasks_store
-from errand.tests.conftest import FIXED_NOW
+from errand.tests.conftest import FIXED_NOW, say
 from errand.tools import registry
 
 
@@ -186,7 +186,7 @@ def test_tighten_drops_allow_rules_and_keeps_restrictions(gmail):
                    domain="email", match={"subject": "spirit"})
     )
 
-    reply = conversation.handle("tighten email")
+    reply = say("/tighten email")
     assert "needs your approval again" in reply.text
 
     remaining = {r.rule_id for r in rules.active_rules()}
@@ -194,7 +194,7 @@ def test_tighten_drops_allow_rules_and_keeps_restrictions(gmail):
 
 
 def test_tighten_a_quiet_domain_says_so():
-    assert "No standing rules" in conversation.handle("tighten dining").text
+    assert "No standing rules" in say("/tighten dining").text
 
 
 def test_adding_a_rule_itself_needs_approval():
@@ -209,6 +209,6 @@ def test_adding_a_rule_itself_needs_approval():
 
 def test_rules_listing_reads_cleanly_on_a_phone():
     _allow_email_rule()
-    text = conversation.handle("rules").text
+    text = say("/rules").text
     assert "landlord" in text
     assert len(text) < 300

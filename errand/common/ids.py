@@ -1,7 +1,8 @@
 """Task and approval identifiers.
 
-Task ids are short on purpose: Andrew types them back over SMS. "T7 yes" has
-to be typeable one-handed while walking.
+Task ids are short on purpose: Andrew reads them on a phone and sometimes
+types them back when a button has scrolled away. "T7 yes" has to be typeable
+one-handed while walking.
 """
 
 from __future__ import annotations

@@ -1,17 +1,26 @@
-# Copy to terraform.tfvars and fill in. No secrets belong in this file:
-# the Twilio auth token goes to Secrets Manager, and the Google OAuth grant
-# to AgentCore Identity.
+# Copy to terraform.tfvars and fill in. No secrets belong in this file: the
+# Telegram bot token and webhook secret go to Secrets Manager, and the Google
+# user tokens to AgentCore Identity (hard rule 6).
 
-owner_number       = "+15555550123"
-twilio_from_number = "+15555550999"
+owner_telegram_id = "123456789"
 
-# Look both of these up in the Bedrock console for this account and region.
+# Look all three up in the Bedrock console for this account and region.
 # Do not copy an id out of documentation or out of a model's memory.
-planner_model_id = "PUT-THE-ID-FROM-THE-BEDROCK-CONSOLE-HERE"
-reader_model_id  = "PUT-THE-ID-FROM-THE-BEDROCK-CONSOLE-HERE"
+default_model_id    = "PUT-THE-HAIKU-4.5-ID-FROM-THE-BEDROCK-CONSOLE-HERE"
+escalation_model_id = "PUT-THE-SONNET-5-ID-FROM-THE-BEDROCK-CONSOLE-HERE"
+reader_model_id     = "PUT-THE-HAIKU-4.5-ID-FROM-THE-BEDROCK-CONSOLE-HERE"
 
-# Tier 3 is refused entirely while this is zero. Set it to whatever you are
-# willing to lose to a bug, not to whatever you can afford.
-tier3_cap_cents = 0
+# USD per million tokens, from the Bedrock pricing page. A model missing from
+# here blocks rather than being counted as free.
+model_rates_json = <<JSON
+{
+  "PUT-THE-HAIKU-4.5-ID-HERE":  {"in": 0.00, "out": 0.00},
+  "PUT-THE-SONNET-5-ID-HERE":   {"in": 0.00, "out": 0.00}
+}
+JSON
+
+# Both of these refuse to act while they are zero. That is deliberate.
+monthly_budget_usd = 0
+tier3_cap_cents    = 0
 
 undo_seconds = 60

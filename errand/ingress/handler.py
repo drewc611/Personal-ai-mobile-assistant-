@@ -1,112 +1,118 @@
-"""The Twilio webhook Lambda.
+"""The Telegram webhook Lambda.
 
-This function does four things and nothing else: validate the signature, check
-the allowlist, drop the message on a durable queue, and answer Twilio. It does
-not call a model, touch Gmail, or decide anything. Keeping it this small means
-the internet-facing surface of Errand is about two hundred lines that are
-entirely about saying no.
+This function does four things and nothing else: check the secret token
+header, check the sender, drop the update on a durable queue, and answer
+Telegram. It does not call a model, touch Gmail, or decide anything. Keeping
+it this small means the internet-facing surface of Errand is a couple of
+hundred lines that are entirely about saying no.
 
-An unknown number gets HTTP 204 and an audit row. No reply, not even an error:
-telling a stranger that their text was rejected confirms the number is live.
+An unknown sender gets HTTP 200 with an empty body and one audit row. Two
+hundred rather than an error because Telegram retries on failure and there is
+nothing to retry; no reply because telling a stranger their message was
+rejected confirms the bot is live.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
-import re
-import urllib.parse
 from typing import Any
 
+from errand.channels import telegram
 from errand.common import clock, config, secrets
-from errand.ingress import twilio_signature
 from errand.store import audit_store
-
-EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
-
-_E164 = re.compile(r"^\+[1-9]\d{6,14}$")
-
-
-def normalise_number(raw: str) -> str:
-    digits = re.sub(r"[^\d+]", "", raw or "")
-    if digits and not digits.startswith("+"):
-        digits = "+" + digits
-    return digits
-
-
-def number_hash(number: str) -> str:
-    """Unknown numbers are logged as a hash. We want to be able to tell two
-    rejected senders apart without keeping either one's number."""
-    salt = os.environ.get("ERRAND_NUMBER_SALT", "errand")
-    return hashlib.sha256((salt + normalise_number(number)).encode()).hexdigest()
-
-
-def is_allowlisted(number: str) -> bool:
-    """Hard rule 4: exactly one number. Not a prefix, not a pattern, not a
-    list that someone can append to by accident."""
-    owner = normalise_number(config.load().owner_number)
-    if not _E164.match(owner):
-        return False
-    import hmac
-
-    return hmac.compare_digest(owner, normalise_number(number))
-
-
-def _form_params(event: dict[str, Any]) -> dict[str, str]:
-    body = event.get("body") or ""
-    if event.get("isBase64Encoded"):
-        import base64
-
-        body = base64.b64decode(body).decode("utf-8", errors="replace")
-    parsed = urllib.parse.parse_qs(body, keep_blank_values=True)
-    return {k: v[0] for k, v in parsed.items()}
 
 
 def _header(event: dict[str, Any], name: str) -> str:
     headers = event.get("headers") or {}
-    lowered = {k.lower(): v for k, v in headers.items()}
-    return lowered.get(name.lower(), "")
+    lowered = {str(k).lower(): v for k, v in headers.items()}
+    return str(lowered.get(name.lower(), ""))
 
 
-def _response(status: int, body: str = "", content_type: str = "text/plain") -> dict[str, Any]:
-    return {
-        "statusCode": status,
-        "headers": {"Content-Type": content_type},
-        "body": body,
-    }
+def _body(event: dict[str, Any]) -> dict[str, Any]:
+    raw = event.get("body") or "{}"
+    if event.get("isBase64Encoded"):
+        import base64
+
+        raw = base64.b64decode(raw).decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def secret_ok(event: dict[str, Any], expected: str) -> bool:
+    """Hard rule 4.
+
+    Telegram sends the value of `secret_token` back in the
+    X-Telegram-Bot-Api-Secret-Token header on every update. The comparison is
+    constant time; a fast reject leaks the secret one byte at a time.
+    """
+    presented = _header(event, telegram.SECRET_HEADER)
+    if not presented or not expected:
+        return False
+    return hmac.compare_digest(presented, expected)
+
+
+def is_allowlisted(sender_id: str) -> bool:
+    """Hard rule 3: exactly one Telegram user id. Not a list, not a pattern."""
+    owner = config.load().owner_telegram_id.strip()
+    if not owner or not str(sender_id).strip():
+        return False
+    return hmac.compare_digest(owner, str(sender_id).strip())
+
+
+def sender_hash(sender_id: str) -> str:
+    """Unknown senders are logged as a hash. Telling two of them apart is
+    worth something; keeping either one's account id is not."""
+    salt = os.environ.get("ERRAND_SENDER_SALT", "errand")
+    return hashlib.sha256((salt + str(sender_id)).encode()).hexdigest()
+
+
+def _response(status: int, body: str = "") -> dict[str, Any]:
+    return {"statusCode": status, "headers": {"Content-Type": "text/plain"}, "body": body}
 
 
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     cfg = config.load()
-    params = _form_params(event)
-    signature = _header(event, "X-Twilio-Signature")
-    webhook_url = os.environ.get("ERRAND_WEBHOOK_URL", "").strip()
+    expected = secrets.telegram_credentials()["webhook_secret"]
 
-    auth_token = secrets.twilio_credentials()["auth_token"]
-    if not twilio_signature.is_valid(auth_token, webhook_url, params, signature):
+    if not secret_ok(event, expected):
         audit_store.write(
             task_id="system",
             phase=audit_store.PHASE_AFTER,
-            event="WEBHOOK_SIGNATURE_REJECTED",
+            event="WEBHOOK_SECRET_REJECTED",
             outcome="DENIED",
-            detail={"has_signature": bool(signature), "param_count": len(params)},
+            detail={"had_header": bool(_header(event, telegram.SECRET_HEADER))},
         )
         return _response(403, "forbidden")
 
-    from_number = params.get("From", "")
-    if not is_allowlisted(from_number):
+    update = _body(event)
+    inbound = _reader().receive(update)
+    if inbound is None:
+        # A sticker, a channel post, an edit we do not handle. Acknowledged so
+        # Telegram stops resending it.
+        return _response(200)
+
+    if not is_allowlisted(inbound.sender_id):
         audit_store.write_rejected_inbound(
-            from_number_hash=number_hash(from_number), reason="not allowlisted"
+            from_number_hash=sender_hash(inbound.sender_id), reason="not allowlisted"
         )
-        return _response(204)
+        return _response(200)
 
     message = {
-        "body": params.get("Body", ""),
-        "from": normalise_number(from_number),
-        "message_sid": params.get("MessageSid", ""),
+        "kind": inbound.kind,
+        "text": inbound.text,
+        "token": inbound.token,
+        "sender_id": inbound.sender_id,
+        "message_id": inbound.message_id,
+        "update_id": inbound.update_id,
+        "voice_ref": inbound.voice_ref,
+        "raw": inbound.raw,
         "received_at": clock.now_iso(),
-        "media": _media(params),
     }
     _enqueue(cfg.queue_url, message)
 
@@ -116,35 +122,18 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         event="INBOUND_ACCEPTED",
         outcome="QUEUED",
         detail={
-            "message_sid": message["message_sid"],
-            "chars": len(message["body"]),
-            "media": len(message["media"]),
+            "kind": inbound.kind,
+            "update_id": inbound.update_id,
+            "chars": len(inbound.text),
         },
     )
-    # Twilio wants TwiML. The real reply comes from the dispatcher as a
-    # separate outbound message, so this one is empty.
-    return _response(200, EMPTY_TWIML, "application/xml")
+    return _response(200)
 
 
-def _media(params: dict[str, str]) -> list[dict[str, str]]:
-    """Voice memos arrive as MediaUrl0 / MediaContentType0.
-
-    NumMedia arrives signed by Twilio, but a signed request is not the same
-    as a well-formed one, so a value that is not a number means no media
-    rather than a 500.
-    """
-    try:
-        count = int(params.get("NumMedia", "0") or 0)
-    except ValueError:
-        return []
-    media = []
-    for index in range(min(count, 5)):
-        url = params.get(f"MediaUrl{index}", "")
-        if url:
-            media.append(
-                {"url": url, "content_type": params.get(f"MediaContentType{index}", "")}
-            )
-    return media
+def _reader() -> telegram.TelegramChannel:
+    """Parsing an update needs no credentials, so the webhook does not fetch
+    the bot token to do it."""
+    return telegram.TelegramChannel(bot_token="", chat_id="")
 
 
 def _enqueue(queue_url: str, message: dict[str, Any]) -> None:
@@ -154,8 +143,8 @@ def _enqueue(queue_url: str, message: dict[str, Any]) -> None:
     client.send_message(
         QueueUrl=queue_url,
         MessageBody=json.dumps(message),
-        # One conversation, one FIFO group: "T7 yes" must never overtake the
-        # message that created T7.
+        # One conversation, one FIFO group: an Approve must never overtake the
+        # message that created the approval, and nothing may overtake STOP ALL.
         MessageGroupId="andrew",
-        MessageDeduplicationId=message["message_sid"] or message["received_at"],
+        MessageDeduplicationId=message["update_id"] or message["received_at"],
     )

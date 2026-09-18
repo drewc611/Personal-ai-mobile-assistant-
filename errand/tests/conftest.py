@@ -1,58 +1,64 @@
 """Test wiring.
 
-Every test runs against the memory backend and fake providers, with a frozen
-clock. Nothing here touches AWS, which is deliberate: the properties these
-tests check - a send never happens without an approval, an unknown number
-never gets a reply - are properties of this code, and a test that needs
-credentials to prove them is a test nobody runs.
+Every test runs against the memory backend, fake providers, and a recording
+channel, with a frozen clock. Nothing here touches AWS or Telegram, which is
+deliberate: the properties these tests check - a send never happens without an
+approval, an unknown sender never gets a reply - are properties of this code,
+and a test that needs credentials to prove them is a test nobody runs.
 """
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
 
 os.environ.setdefault("ERRAND_BACKEND", "memory")
-os.environ.setdefault("ERRAND_OWNER_NUMBER", "+15555550123")
-os.environ.setdefault("ERRAND_TWILIO_FROM", "+15555550999")
-os.environ.setdefault("ERRAND_PLANNER_MODEL_ID", "test-planner-model")
-os.environ.setdefault("ERRAND_READER_MODEL_ID", "test-reader-model")
+os.environ.setdefault("ERRAND_OWNER_TELEGRAM_ID", "8675309")
+os.environ.setdefault("ERRAND_DEFAULT_MODEL_ID", "test-haiku")
+os.environ.setdefault("ERRAND_ESCALATION_MODEL_ID", "test-sonnet")
+os.environ.setdefault("ERRAND_READER_MODEL_ID", "test-reader")
 os.environ.setdefault("ERRAND_UNDO_SECONDS", "60")
 os.environ.setdefault("ERRAND_APPROVAL_TTL_SECONDS", "3600")
 os.environ.setdefault("ERRAND_TIER3_CAP_CENTS", "15000")
-os.environ.setdefault("ERRAND_WEBHOOK_URL", "https://errand.example.com/sms")
+os.environ.setdefault("ERRAND_MONTHLY_BUDGET_USD", "20")
+os.environ.setdefault(
+    "ERRAND_MODEL_RATES",
+    json.dumps({
+        "test-haiku": {"in": 1.0, "out": 5.0},
+        "test-sonnet": {"in": 3.0, "out": 15.0},
+        "test-reader": {"in": 1.0, "out": 5.0},
+    }),
+)
 
 import errand.tools  # noqa: E402,F401  registers every tool
 from errand.agent import planner as planner_mod  # noqa: E402
+from errand.channels import base as channels  # noqa: E402
 from errand.common import clock, secrets  # noqa: E402
-from errand.dispatcher import sms, voice  # noqa: E402
+from errand.dispatcher import voice  # noqa: E402
 from errand.reader import quarantine  # noqa: E402
 from errand.store import backend as backend_mod  # noqa: E402
 from errand.tools import providers  # noqa: E402
 
-FIXED_NOW = 1_764_500_000.0  # 2025-11-30T12:13:20Z, a Sunday lunchtime
+FIXED_NOW = 1_764_500_000.0  # 2025-11-30T12:13:20Z
+OWNER_ID = "8675309"
+WEBHOOK_SECRET = "a-long-enough-webhook-secret-value-32+"
 
 
 @pytest.fixture(autouse=True)
-def _isolate(monkeypatch):
-    backend = backend_mod.MemoryBackend()
-    backend_mod.set_backend(backend)
+def _isolate():
+    backend_mod.set_backend(backend_mod.MemoryBackend())
     clock.freeze(FIXED_NOW)
+
     secrets.clear_cache()
     secrets.set_cached(
-        "errand/twilio", {"account_sid": "AC_test", "auth_token": "test_token"}
+        "errand/telegram", {"bot_token": "test-bot-token", "webhook_secret": WEBHOOK_SECRET}
     )
 
-    fake = providers.build_fake_providers()
-    providers.set_providers(fake)
-
-    sender = sms.RecordingSender()
-    sms.set_sender(sender)
-
-    transcriber = voice.FakeTranscriber()
-    voice.set_transcriber(transcriber)
-
+    providers.set_providers(providers.build_fake_providers())
+    channels.set_channel(channels.RecordingChannel())
+    voice.set_transcriber(voice.FakeTranscriber())
     quarantine.set_client(None)
     planner_mod.set_planner(None)
 
@@ -61,7 +67,7 @@ def _isolate(monkeypatch):
     clock.unfreeze()
     backend_mod.set_backend(None)
     providers.set_providers(None)
-    sms.set_sender(None)
+    channels.set_channel(None)
     voice.set_transcriber(None)
     quarantine.set_client(None)
     planner_mod.set_planner(None)
@@ -89,8 +95,8 @@ def search():
 
 
 @pytest.fixture
-def sender():
-    return sms.get_sender()
+def channel():
+    return channels.get_channel()
 
 
 @pytest.fixture
@@ -139,3 +145,76 @@ def fake_reader():
         return reader
 
     return install
+
+
+def text_message(text: str, *, sender: str = OWNER_ID, update_id: str = "1"):
+    """A Telegram Update for a plain text message."""
+    return {
+        "update_id": int(update_id),
+        "message": {
+            "message_id": 100 + int(update_id),
+            "from": {"id": int(sender)},
+            "chat": {"id": int(sender)},
+            "text": text,
+        },
+    }
+
+
+def voice_message(*, sender: str = OWNER_ID, update_id: str = "1", caption: str = ""):
+    message = {
+        "message_id": 100 + int(update_id),
+        "from": {"id": int(sender)},
+        "chat": {"id": int(sender)},
+        "voice": {"file_id": "AwACAgEAAx", "duration": 3, "mime_type": "audio/ogg"},
+    }
+    if caption:
+        message["caption"] = caption
+    return {"update_id": int(update_id), "message": message}
+
+
+def button_press(token: str, *, sender: str = OWNER_ID, update_id: str = "1",
+                 message_id: str = "500"):
+    return {
+        "update_id": int(update_id),
+        "callback_query": {
+            "id": "cbq1",
+            "from": {"id": int(sender)},
+            "data": token,
+            "message": {"message_id": int(message_id), "chat": {"id": int(sender)}},
+        },
+    }
+
+
+def say(text: str):
+    """Shorthand: one typed message in, one Reply out."""
+    from errand.channels.base import Inbound
+    from errand.dispatcher import conversation
+
+    return conversation.respond(Inbound(kind="text", text=text, sender_id=OWNER_ID))
+
+
+def tap(token: str, *, message_id: str = "500"):
+    """Shorthand: one button press in, one Reply out."""
+    from errand.channels.base import Inbound
+    from errand.dispatcher import conversation
+
+    return conversation.respond(
+        Inbound(kind="button", token=token, sender_id=OWNER_ID, message_id=message_id)
+    )
+
+
+def approve_token(reply) -> str:
+    """The Approve token from a reply's buttons."""
+    from errand.dispatcher import commands
+
+    for button in reply.buttons:
+        if button.token.startswith(f"{commands.VERB_FOR[commands.APPROVE]}:"):
+            return button.token
+    raise AssertionError(f"no Approve button in {[b.label for b in reply.buttons]}")
+
+
+def button_labelled(reply, label: str) -> str:
+    for button in reply.buttons:
+        if button.label.lower().startswith(label.lower()):
+            return button.token
+    raise AssertionError(f"no {label!r} button in {[b.label for b in reply.buttons]}")

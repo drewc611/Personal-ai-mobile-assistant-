@@ -1,19 +1,20 @@
 # v2 only
 
-Nothing here yet, and nothing should be built here until two things are true.
+Empty on purpose. PLAN.md puts voice in v2 and CLAUDE.md says not to start a
+later phase without Andrew saying so.
 
-**Step 1, calls with Andrew only.** Twilio voice streams call audio over a
-websocket to Nova Sonic through Bedrock's bidirectional API, with tool calls
-routed to the same gate as everything else. AWS publishes a sample of this
-exact integration (Amazon Web Services, n.d.).
+When it does get built, it arrives through the Channel interface in
+`channels/`, not around it. Twilio SMS and voice become another implementation
+of `Channel`; the gate, the approvals, the audit log and the conversation
+handler should need no change. That is the test of whether the interface was
+drawn in the right place.
 
-**Step 2, outbound calls to businesses.** Bill negotiation, appointments,
-"hold for me". This needs a legal check on call recording consent and AI
-disclosure for both the caller's and the callee's states, and Andrew's
-sign-off on that check, before any code is written. Do not build step 2
-without it.
+Two things are blocked until then:
 
-"Hold for me" is the least legally complicated of the voice ideas: Errand
-waits on hold and connects Andrew when a human picks up, so Andrew is the one
-on the call. It is still a recorded outbound call, so it still waits for the
-check.
+- **Outbound calls where the agent speaks to a business** (bill negotiation,
+  appointments) wait on a legal check on call recording consent and AI
+  disclosure, and Andrew's sign-off on that check.
+- **Hold for me** - the agent waits on hold and bridges Andrew in when a human
+  answers - is the least legally complicated of the voice ideas, because
+  Andrew is the one on the call. It is still a recorded outbound call, so it
+  still waits.

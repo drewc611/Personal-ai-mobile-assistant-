@@ -76,7 +76,7 @@ class OutboxEntry:
 
 
 def _table() -> str:
-    return config.load().approvals_table
+    return config.load().table("approvals")
 
 
 def hold(

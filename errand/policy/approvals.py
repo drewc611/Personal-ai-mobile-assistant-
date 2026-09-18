@@ -131,7 +131,7 @@ def digest_args(tool: str, args: dict[str, Any]) -> str:
 
 
 def _table() -> str:
-    return config.load().approvals_table
+    return config.load().table("approvals")
 
 
 def request(
@@ -220,7 +220,7 @@ def approve(
     approval: Approval,
     *,
     amount_text: str | None = None,
-    granted_by: str = "sms",
+    granted_by: str = "button",
 ) -> Approval:
     """Grant one approval. Raises ApprovalError with a message meant to be
     texted verbatim - Andrew needs to know what to type next, not that

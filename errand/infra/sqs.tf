@@ -1,6 +1,6 @@
-# FIFO with one message group. Order matters more than throughput here: "T7
-# yes" must never be processed before the message that created T7, and an
-# approval must never overtake a STOP ALL.
+# FIFO with one message group. Order matters more than throughput here: an
+# Approve must never be processed before the message that created the
+# approval, and nothing must overtake a STOP ALL.
 
 resource "aws_sqs_queue" "inbound_dlq" {
   name                      = "errand-inbound-dlq.fifo"

@@ -123,7 +123,7 @@ class RuleDecision:
 
 
 def _table() -> str:
-    return config.load().tasks_table
+    return config.load().table("rules")
 
 
 def validate(rule: Rule) -> Rule:

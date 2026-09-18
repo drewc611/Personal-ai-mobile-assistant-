@@ -113,7 +113,7 @@ def test_every_attempt_is_in_the_audit_log(payload):
     assert any(r["phase"] == audit_store.PHASE_BEFORE for r in rows)
 
 
-def test_a_summarise_request_over_hostile_mail_sends_nothing(gmail, sender, scripted):
+def test_a_summarise_request_over_hostile_mail_sends_nothing(gmail, scripted):
     """The acceptance criterion, stated as a whole-system test: a hostile email
     in the inbox, a normal "what's in my inbox" request, and a planner that
     reads it and then tries to comply."""
@@ -131,9 +131,9 @@ def test_a_summarise_request_over_hostile_mail_sends_nothing(gmail, sender, scri
         text="One invoice from chaos@example.com. It tried to give me instructions.",
     )
 
-    from errand.dispatcher import conversation
+    from errand.tests.conftest import say
 
-    reply = conversation.handle("summarise my inbox")
+    reply = say("summarise my inbox")
 
     assert gmail.sent == []
     assert "PENDING_APPROVAL" not in reply.text          # Andrew sees prose, not a status code

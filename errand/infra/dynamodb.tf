@@ -1,14 +1,28 @@
-# Four tables, all pk/sk, all on-demand. This is a single-user system; the
-# read and write volume does not justify provisioned capacity or a moment's
-# thought about partition design beyond keeping one task's rows together.
+# One table per entity, as PLAN.md sets out, plus `content`. All pk/sk, all on
+# demand: this is a single-user system and the volume does not justify
+# provisioned capacity or any thought about partition design beyond keeping
+# one task's rows together.
+#
+# `content` is the extra one. Hard rule 7 says a disconnect deletes every
+# stored copy of an account's data and reports what it deleted; that needs a
+# table that can be enumerated by connection, or the receipt is a promise
+# rather than a count.
 
 locals {
   tables = {
-    tasks     = "errand-tasks"
-    approvals = "errand-approvals"
-    audit     = "errand-audit"
-    content   = "errand-content"
+    tasks       = "errand-tasks"
+    approvals   = "errand-approvals"
+    audit       = "errand-audit"
+    rules       = "errand-rules"
+    receipts    = "errand-receipts"
+    connections = "errand-connections"
+    budget      = "errand-budget"
+    content     = "errand-content"
   }
+
+  # Only the content table expires rows on its own. Everything else is either
+  # the record of what happened (audit, receipts) or current state.
+  ttl_tables = ["content"]
 }
 
 resource "aws_dynamodb_table" "errand" {
@@ -35,16 +49,11 @@ resource "aws_dynamodb_table" "errand" {
   }
 
   point_in_time_recovery {
-    # On for the audit log because it is the record of what happened. On for
-    # the others because a single-user table is cheap to protect.
     enabled = true
   }
 
-  # The content table is the only one that caches third-party data, and
-  # "disconnect gmail" deletes from it explicitly. The TTL is a backstop for
-  # anything a disconnect never covered.
   dynamic "ttl" {
-    for_each = each.key == "content" ? [1] : []
+    for_each = contains(local.ttl_tables, each.key) ? [1] : []
     content {
       attribute_name = "expires_at"
       enabled        = true

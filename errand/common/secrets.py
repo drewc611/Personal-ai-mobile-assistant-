@@ -1,8 +1,8 @@
 """Secrets Manager access.
 
-Hard rule 7: no secrets in code or env files. The environment holds the *name*
-of a secret; the value is fetched here and cached for the life of the Lambda
-container only.
+Hard rule 6: no secrets in code, images, or committed files. The environment
+holds the *name* of a secret; the value is fetched here and cached for the
+life of the Lambda container only.
 """
 
 from __future__ import annotations
@@ -28,12 +28,16 @@ def get_secret(secret_id: str) -> dict[str, Any]:
     return value
 
 
-def twilio_credentials() -> dict[str, Any]:
-    """Expects {"account_sid": ..., "auth_token": ...}."""
-    secret = get_secret(config.load().twilio_secret_id)
-    missing = {"account_sid", "auth_token"} - set(secret)
+def telegram_credentials() -> dict[str, Any]:
+    """Expects {"bot_token": ..., "webhook_secret": ...}.
+
+    The webhook secret is the value Telegram echoes back in the
+    X-Telegram-Bot-Api-Secret-Token header on every update.
+    """
+    secret = get_secret(config.load().telegram_secret_id)
+    missing = {"bot_token", "webhook_secret"} - set(secret)
     if missing:
-        raise RuntimeError(f"twilio secret is missing {', '.join(sorted(missing))}")
+        raise RuntimeError(f"telegram secret is missing {', '.join(sorted(missing))}")
     return secret
 
 

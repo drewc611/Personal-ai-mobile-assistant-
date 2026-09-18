@@ -2,8 +2,8 @@
 
 This is what runs inside the AgentCore container. It holds the Strands agent
 and the tool wrappers; the dispatcher Lambda calls it over the runtime API
-rather than importing it, which keeps the model loop and the SMS plumbing in
-separate blast radii.
+rather than importing it, which keeps the model loop and the messaging
+plumbing in separate blast radii.
 
 The tool implementations run *here*, inside the runtime, so the gate and the
 audit log run here too. The dispatcher only sees the finished reply.

@@ -19,7 +19,7 @@ PHASE_AFTER = "AFTER"
 
 
 def _table() -> str:
-    return config.load().audit_table
+    return config.load().table("audit")
 
 
 def _sk(phase: str, sequence: int) -> str:
