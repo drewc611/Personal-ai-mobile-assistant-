@@ -1,0 +1,11 @@
+# Copy to backend.hcl and fill in from the bootstrap's `backend_hcl` output:
+#
+#   terraform -chdir=bootstrap output -raw backend_hcl > backend.hcl
+#
+# backend.hcl is gitignored: it names an account-specific bucket.
+
+bucket         = "errand-tfstate-000000000000-abcdef123456"
+key            = "errand/v0/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "errand-tfstate-lock"
+encrypt        = true

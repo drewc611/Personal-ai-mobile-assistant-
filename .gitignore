@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+crash.log
+
+# Account-specific backend config and the bootstrap's local state.
+errand/infra/backend.hcl
+errand/infra/bootstrap/.terraform.lock.hcl
