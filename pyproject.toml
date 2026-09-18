@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,13 +8,13 @@ version = "0.1.0"
 description = "Andrew's personal text and voice agent"
 requires-python = ">=3.12"
 dependencies = [
-    "boto3>=1.35",
-    "strands-agents>=0.1",
-    "bedrock-agentcore>=0.1",
+    "boto3>=1.43.95",
+    "strands-agents>=1.56.0",
+    "bedrock-agentcore>=1.23.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=9.1.1", "ruff>=0.16.7"]
 
 [tool.setuptools.packages.find]
 include = ["errand*"]

@@ -4,6 +4,6 @@
 # The Lambdas use requirements-lambda.txt instead. They never load a model, so
 # bundling these into the Lambda zip adds tens of megabytes of code that is
 # never imported, against a 50MB limit.
-boto3>=1.35
-strands-agents>=0.1
-bedrock-agentcore>=0.1
+boto3>=1.43.95
+strands-agents>=1.56.0
+bedrock-agentcore>=1.23.0
