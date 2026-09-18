@@ -1,5 +1,9 @@
-# Runtime. Pinned loosely on purpose: this is a single-user system and an
-# unattended minor bump is less risky than a stale SDK.
+# The agent runtime's dependencies: the AgentCore Runtime container image,
+# where the Strands agent and the models actually run.
+#
+# The Lambdas use requirements-lambda.txt instead. They never load a model, so
+# bundling these into the Lambda zip adds tens of megabytes of code that is
+# never imported, against a 50MB limit.
 boto3>=1.35
 strands-agents>=0.1
 bedrock-agentcore>=0.1

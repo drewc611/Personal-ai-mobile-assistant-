@@ -99,11 +99,18 @@ knowing about:
 ## Deploying
 
 ```bash
-cd errand && make build          # -> build/errand.zip
+cd errand && make check          # lint, terraform fmt/validate, tests
+make build                       # -> build/errand.zip, must stay under 50MB
 cd infra
 cp terraform.tfvars.example terraform.tfvars   # fill it in
 terraform init && terraform apply
 ```
+
+The Lambda zip carries `requirements-lambda.txt` (boto3 and the `errand`
+package) and not `requirements.txt`. Strands and the AgentCore SDK are the
+agent container's dependencies; the Lambdas never load a model, and bundling
+them put the zip over Lambda's 50MB direct-upload limit. `make build` fails
+if the artifact grows past it.
 
 Then, in this order:
 
