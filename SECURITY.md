@@ -87,7 +87,15 @@ it is free for a user-owned repository.
   fails if one appears without it. Only the CodeQL job may write findings,
   and that is all it may write.
 - Terraform providers are pinned by `.terraform.lock.hcl`.
+- `pip-audit` runs on every push against all three requirements files
+  (Lambda, agent container, CI runner) using the PyPI advisory database.
 - Dependabot raises weekly PRs for actions, Python packages and providers.
+
+GitHub's own Dependabot alerts are an additional layer and need one setting:
+**Settings → Code security → Dependency graph**. `actions/dependency-review-action`
+depends on it too, which is why CI does not use that action — a check that
+fails because a repository toggle is off is reporting on itself rather than on
+the code.
 
 ## What is not defended
 
