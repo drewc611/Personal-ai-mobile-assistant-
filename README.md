@@ -290,23 +290,31 @@ answers everything with "no budget is set": `monthly_budget_usd`,
 `tier3_cap_cents`, and `model_rates_json`. It also catches a model id that has
 no price entry, which would make every call routed to it refuse as unpriced.
 
-**The bot wires itself.** Add two repository secrets at Settings → Secrets
-and variables → Actions:
+**The bot wires itself.** The deploy reads `errand/telegram` from Secrets
+Manager, calls `setWebhook` so Telegram delivers to your API Gateway URL, and
+prints `getWebhookInfo` so you can see it took.
+
+Two ways to get the value in there. Either put it in yourself:
+
+```json
+{"bot_token": "...", "webhook_secret": "..."}
+```
+
+Or add two repository secrets at Settings → Secrets and variables → Actions
+and let the deploy write it:
 
 | Secret | What |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | from @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | any 32+ random chars — `openssl rand -hex 32` |
 
-The deploy then stores them in Secrets Manager, calls `setWebhook` so Telegram
-delivers to your API Gateway URL, and prints `getWebhookInfo` so you can see
-it took. Neither value is ever printed, and neither is passed as a command
-argument. Leave them unset and the deploy skips the bot wiring rather than
-failing.
+Secrets Manager is the source of truth either way, so the two cannot disagree.
+Neither value is ever printed: a value read back from AWS is masked
+explicitly, because unlike a GitHub secret it does not arrive masked.
 
-The webhook secret is what the ingress Lambda checks on every update
-(hard rule 4), so it must be the same value in both places — which is why one
-step writes both rather than you doing it twice.
+`webhook_secret` is what the ingress Lambda checks on every update (hard rule
+4), so a secret missing it fails the deploy loudly rather than leaving you
+with a bot whose every message is silently rejected.
 
 **Still yours to do by hand**, because they are not AWS:
 

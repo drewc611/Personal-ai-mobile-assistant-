@@ -112,21 +112,42 @@ jobs:
 
       - name: Point Telegram at the webhook
         if: inputs.apply
-        env:
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
         run: |
           set -e
-          if [ -z "$BOT_TOKEN" ]; then
-            echo "TELEGRAM_BOT_TOKEN is not set; skipping the bot wiring."
-            echo "Add it at Settings > Secrets and variables > Actions."
+          # Secrets Manager is the source of truth, not the GitHub secret.
+          # The step above populates it when the GitHub secrets are set; if
+          # the value was put there by hand instead, this still works. Reading
+          # it here rather than taking the GitHub secret is also what keeps
+          # the two from disagreeing.
+          creds="$(aws secretsmanager get-secret-value \
+            --secret-id errand/telegram --query SecretString --output text 2>/dev/null || true)"
+
+          if [ -z "$creds" ]; then
+            echo "errand/telegram has no value yet; skipping the webhook."
+            echo "Either set the TELEGRAM_* repository secrets or put the"
+            echo "value in Secrets Manager, then run this workflow again."
             exit 0
           fi
+
+          BOT_TOKEN="$(printf '%s' "$creds" | jq -r '.bot_token // empty')"
+          WEBHOOK_SECRET="$(printf '%s' "$creds" | jq -r '.webhook_secret // empty')"
+
+          # A value read from AWS is not masked the way a GitHub secret is, so
+          # mask it explicitly before anything can echo it.
+          echo "::add-mask::$BOT_TOKEN"
+          echo "::add-mask::$WEBHOOK_SECRET"
+
+          if [ -z "$BOT_TOKEN" ] || [ -z "$WEBHOOK_SECRET" ]; then
+            echo "errand/telegram needs both bot_token and webhook_secret."
+            echo "The ingress Lambda checks webhook_secret on every update, so"
+            echo "a missing one means Telegram is rejected with no reason given."
+            exit 1
+          fi
+
           url="$(terraform -chdir=errand/infra output -raw webhook_url)"
 
           # --data-urlencode keeps the secret out of the URL, so it cannot end
-          # up in a proxy log. -s so a failure does not dump the token-bearing
-          # request line.
+          # up in a proxy log.
           response="$(curl -sS -X POST \
             "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
             --data-urlencode "url=${url}" \
@@ -134,7 +155,6 @@ jobs:
             --data-urlencode "allowed_updates=[\"message\",\"edited_message\",\"callback_query\"]" \
             --data-urlencode "drop_pending_updates=true")"
 
-          # The response echoes the URL but never the token or the secret.
           echo "$response"
           echo "$response" | jq -e '.ok == true' > /dev/null || {
             echo "setWebhook failed; see the description above."
@@ -144,17 +164,18 @@ jobs:
 
       - name: Confirm what Telegram thinks
         if: inputs.apply
-        env:
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           set -e
-          if [ -z "$BOT_TOKEN" ]; then
-            echo "TELEGRAM_BOT_TOKEN is not set; skipping the bot wiring."
-            echo "Add it at Settings > Secrets and variables > Actions."
-            exit 0
-          fi
-          # getWebhookInfo returns the URL, pending update count and the last
-          # error, which is the single most useful thing to see after a deploy.
+          creds="$(aws secretsmanager get-secret-value \
+            --secret-id errand/telegram --query SecretString --output text 2>/dev/null || true)"
+          [ -z "$creds" ] && exit 0
+
+          BOT_TOKEN="$(printf '%s' "$creds" | jq -r '.bot_token // empty')"
+          echo "::add-mask::$BOT_TOKEN"
+          [ -z "$BOT_TOKEN" ] && exit 0
+
+          # getWebhookInfo reports the URL Telegram has and the last delivery
+          # error, which is the one thing worth seeing after a deploy.
           curl -sS "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo" \
             | jq '{url: .result.url,
                    pending: .result.pending_update_count,
