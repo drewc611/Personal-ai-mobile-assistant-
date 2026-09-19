@@ -41,9 +41,10 @@ output "next_steps" {
     3. Write the backend config and initialise the main stack:
            terraform -chdir=.. init -backend-config=backend.hcl
 
-    4. Fill in errand/infra/terraform.tfvars. The deploy will refuse to run
-       until the model ids, the phone numbers, the budget and the tier 3 cap
-       are all set.
+    4. Fill in errand/infra/terraform.tfvars, starting from
+       terraform.tfvars.example. The deploy will refuse to run until the model
+       ids, the owner identity for the channel you picked, the budget and the
+       tier 3 cap are all set.
 
   EOT
 }

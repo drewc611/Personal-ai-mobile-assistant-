@@ -10,19 +10,79 @@ variable "region" {
   default     = "us-east-2"
 }
 
-variable "owner_number" {
-  description = "Andrew's mobile in E.164. The only number the system will answer."
+variable "channel" {
+  description = <<-EOT
+    Which Channel implementation is live. The rest of the system never reads
+    this; only the ingress Lambda and channels.get_channel do.
+
+    It decides which of the owner identities below is required: telegram needs
+    owner_telegram_id, twilio needs owner_number and twilio_from_number. The
+    unused pair stays empty rather than being filled with a placeholder.
+  EOT
   type        = string
+  default     = "telegram"
 
   validation {
-    condition     = can(regex("^\\+[1-9]\\d{6,14}$", var.owner_number))
+    condition     = contains(["telegram", "twilio"], var.channel)
+    error_message = "channel must be telegram or twilio."
+  }
+}
+
+variable "owner_telegram_id" {
+  description = <<-EOT
+    Hard rule 3: the one Telegram user id the system will answer. A numeric id,
+    not an @username -- a username can be given up and taken by someone else,
+    an id cannot.
+
+    Message the bot and read it out of the ingress log, or ask @userinfobot.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.owner_telegram_id == "" || can(regex("^[0-9]+$", var.owner_telegram_id))
+    error_message = "owner_telegram_id must be the numeric Telegram user id, digits only."
+  }
+
+  validation {
+    condition     = var.channel != "telegram" || var.owner_telegram_id != ""
+    error_message = "channel = telegram requires owner_telegram_id, or the bot answers nobody."
+  }
+}
+
+variable "owner_number" {
+  description = <<-EOT
+    Hard rule 3 for the Twilio channel: Andrew's mobile in E.164, the only
+    number the system will answer. Leave empty when channel = telegram.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.owner_number == "" || can(regex("^\\+[1-9]\\d{6,14}$", var.owner_number))
     error_message = "owner_number must be E.164, for example +15555550123."
+  }
+
+  validation {
+    condition     = var.channel != "twilio" || var.owner_number != ""
+    error_message = "channel = twilio requires owner_number, or the system answers nobody."
   }
 }
 
 variable "twilio_from_number" {
-  description = "The Twilio number Errand texts from, E.164."
+  description = "The Twilio number Errand texts from, E.164. Empty when channel = telegram."
   type        = string
+  default     = ""
+
+  validation {
+    condition     = var.twilio_from_number == "" || can(regex("^\\+[1-9]\\d{6,14}$", var.twilio_from_number))
+    error_message = "twilio_from_number must be E.164, for example +15555550999."
+  }
+
+  validation {
+    condition     = var.channel != "twilio" || var.twilio_from_number != ""
+    error_message = "channel = twilio requires twilio_from_number."
+  }
 }
 
 variable "default_model_id" {

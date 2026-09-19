@@ -11,7 +11,7 @@ Python 3.12, Strands Agents, Amazon Bedrock, Terraform. Andrew's personal AWS ac
 This originally said us-east-1, because Nova Sonic launched there and v2 voice needs it. Andrew moved it to us-east-2 after his account was already set up there, accepting that tradeoff. v2 will either call Sonic cross-region or use whatever speech model is in us-east-2 by then; either way it is a v2 problem, not a reason to keep the rest of the stack in a region he is not using.
 Hosting: Bedrock AgentCore Runtime (agent), AgentCore Memory, AgentCore Gateway (tools), AgentCore Identity (outbound OAuth), AgentCore Browser (v1), AgentCore Observability.
 Ingress: API Gateway + Lambda for the Twilio webhook, SQS FIFO queue to the agent.
-Messaging: Twilio SMS, behind the `Channel` interface in `channels/`. Voice in v2.
+Messaging: behind the `Channel` interface in `channels/`. Telegram is the live channel; Twilio SMS is the other implementation, and `channel` in tfvars picks one. Voice in v2.
 Storage: DynamoDB (on demand) and S3, both encrypted with a customer managed KMS key.
 Voice memos: Amazon Transcribe. Search: a `search` tool interface, AgentCore web search as the first implementation.
 Set CloudWatch log retention and trace sampling on day one.
@@ -52,8 +52,8 @@ Kill switch: texting "STOP ALL" halts every running task, revokes pending approv
 | 1 | `policy/gate.py`, `tools/registry.py` | `tests/unit/test_gate.py`, `tests/injection/` |
 | 2 | `reader/quarantine.py`, `tools/gmail.py:gmail_read` | `tests/unit/test_reader.py` |
 | 3 | `reader/schemas.py` | `tests/unit/test_reader.py` |
-| 4 | `ingress/handler.py:is_allowlisted` | `tests/unit/test_ingress.py` |
-| 5 | `channels/twilio.py:signature_is_valid` | `tests/unit/test_ingress.py` |
+| 4 | `channels/telegram.py:owner_matches`, `ingress/handler.py:_handle_twilio` | `tests/unit/test_ingress_telegram.py`, `tests/unit/test_ingress.py` |
+| 5 | `channels/telegram.py:verify_webhook`, `channels/twilio.py:signature_is_valid` | `tests/unit/test_ingress_telegram.py`, `tests/unit/test_ingress.py` |
 | 6 | `store/audit_store.py`, `tools/registry.py` | `tests/unit/test_gate.py` |
 | 7 | `common/secrets.py`, `infra/secrets.tf`, `infra/iam.tf` | reviewed, not tested |
 | 8 | `policy/budget.py`, `agent/planner.py` | `tests/unit/test_budget.py` |
@@ -72,8 +72,14 @@ Kill switch: texting "STOP ALL" halts every running task, revokes pending approv
 - **Do not re-plan an approved action.** "T7 yes" executes the stored
   arguments, checked against a digest taken when the approval was created.
   Andrew approved an action, not an intention.
-- **Do not widen the allowlist to a list.** Rule 4 says one number. A list is
-  one merge away from a list with a mistake in it.
+- **Do not widen the allowlist to a list.** Rule 4 says one sender -- one
+  Telegram user id, or one number on Twilio. A list is one merge away from a
+  list with a mistake in it.
+- **An empty owner identity rejects everybody, and that is the right way
+  round.** `owner_matches` returns False on an empty owner rather than
+  matching, so a half-filled tfvars gives you a silent bot, never an open one.
+  Terraform refuses the deploy instead: `channel = telegram` requires
+  `owner_telegram_id`.
 - **Do not hardcode a Bedrock model id.** `common/config.py` raises when one
   is missing, and that is correct behaviour.
 - **The budget check runs before the model call, not after.** Checking

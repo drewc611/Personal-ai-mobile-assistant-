@@ -41,11 +41,22 @@ def parse(path: Path) -> dict[str, str]:
 
 
 REQUIRED = {
-    "owner_number": "Andrew's mobile in E.164. Rule 4: the only number answered.",
-    "twilio_from_number": "The Twilio number Errand texts from.",
     "default_model_id": "Claude Haiku 4.5. Look it up in the Bedrock console.",
     "escalation_model_id": "Claude Sonnet 5. Look it up in the Bedrock console.",
     "reader_model_id": "The quarantined reader's model. Look it up too.",
+}
+
+# Hard rule 3 is one owner, and which identity that is depends on the channel.
+# Requiring both pairs would mean inventing a phone number to deploy a Telegram
+# bot, and a placeholder in an allowlist is worse than an empty one.
+OWNER_BY_CHANNEL = {
+    "telegram": {
+        "owner_telegram_id": "The numeric Telegram user id. Rule 3: the only sender answered.",
+    },
+    "twilio": {
+        "owner_number": "Andrew's mobile in E.164. Rule 3: the only number answered.",
+        "twilio_from_number": "The Twilio number Errand texts from.",
+    },
 }
 
 MUST_BE_POSITIVE = {
@@ -68,7 +79,17 @@ def main(argv: list[str]) -> int:
     values = parse(path)
     problems: list[str] = []
 
-    for key, why in REQUIRED.items():
+    # config.load() defaults to telegram, so an unset channel means telegram
+    # here too. The two must agree or preflight passes a file the Lambda then
+    # rejects at runtime.
+    channel = values.get("channel", "telegram").strip().lower() or "telegram"
+    if channel not in OWNER_BY_CHANNEL:
+        print(f"FAIL channel is {channel!r}; it must be telegram or twilio.")
+        return 1
+
+    required = {**REQUIRED, **OWNER_BY_CHANNEL[channel]}
+
+    for key, why in required.items():
         value = values.get(key, "").strip()
         if not value:
             problems.append(f"{key} is not set. {why}")

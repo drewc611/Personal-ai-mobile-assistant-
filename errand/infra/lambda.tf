@@ -14,6 +14,9 @@ locals {
     ERRAND_RECEIPTS_BUCKET      = aws_s3_bucket.receipts.bucket
     ERRAND_TRANSCRIBE_BUCKET    = aws_s3_bucket.voice.bucket
     ERRAND_QUEUE_URL            = aws_sqs_queue.inbound.url
+    ERRAND_CHANNEL              = var.channel
+    ERRAND_TELEGRAM_SECRET_ID   = aws_secretsmanager_secret.telegram.name
+    ERRAND_OWNER_TELEGRAM_ID    = var.owner_telegram_id
     ERRAND_TWILIO_SECRET_ID     = aws_secretsmanager_secret.twilio.name
     ERRAND_TWILIO_FROM          = var.twilio_from_number
     ERRAND_OWNER_NUMBER         = var.owner_number
