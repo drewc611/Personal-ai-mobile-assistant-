@@ -18,6 +18,7 @@ locals {
     connections = "errand-connections"
     budget      = "errand-budget"
     content     = "errand-content"
+    recipes     = "errand-recipes"
   }
 
   # Only the content table expires rows on its own. Everything else is either

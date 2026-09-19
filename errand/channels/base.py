@@ -225,7 +225,14 @@ def set_channel(channel: Channel | None) -> None:
 def get_channel() -> Channel:
     global _channel
     if _channel is None:
-        from errand.channels import twilio
+        from errand.common import config
 
-        _channel = twilio.build_from_secrets()
+        if config.load().is_telegram:
+            from errand.channels import telegram
+
+            _channel = telegram.build_from_secrets()
+        else:
+            from errand.channels import twilio
+
+            _channel = twilio.build_from_secrets()
     return _channel
