@@ -65,8 +65,39 @@ jobs:
 
       - name: Validate
         run: |
-          terraform -chdir=errand/infra init -backend=false -input=false
+          set -e
+          # `terraform init` downloads providers from releases.hashicorp.com,
+          # and that download is the least reliable thing in this workflow --
+          # it has already failed once with a connection reset mid-transfer.
+          # Three bounded attempts, because a genuine configuration error
+          # fails identically on all three and still turns the build red.
+          for attempt in 1 2 3; do
+            if terraform -chdir=errand/infra init -backend=false -input=false; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "terraform init failed three times; not a transient download"
+              exit 1
+            fi
+            echo "init attempt $attempt failed, retrying in $((attempt * 5))s"
+            sleep $((attempt * 5))
+          done
           terraform -chdir=errand/infra validate
+
+      - name: Validate the bootstrap
+        run: |
+          set -e
+          # The bootstrap is a separate root and CI was not checking it at all,
+          # so a syntax error there would only have surfaced when Andrew ran
+          # the one command that has to work first time.
+          for attempt in 1 2 3; do
+            if terraform -chdir=errand/infra/bootstrap init -backend=false -input=false; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
+          terraform -chdir=errand/infra/bootstrap validate
 
   package:
     # Lambda refuses a direct upload over 50MB, and the artifact went 176MB
