@@ -1,4 +1,9 @@
-"""The Twilio webhook: signature first, allowlist second, nothing else."""
+"""The Twilio webhook: signature first, allowlist second, nothing else.
+
+Telegram is the live channel, so these run with the channel switched over --
+which is itself worth testing: the adapter is supposed to make that a config
+change rather than a code change.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +22,11 @@ from errand.tests.conftest import (
     signed_event,
     sms_params,
 )
+
+
+@pytest.fixture(autouse=True)
+def _twilio_channel(monkeypatch):
+    monkeypatch.setenv("ERRAND_CHANNEL", "twilio")
 
 
 @pytest.fixture(autouse=True)

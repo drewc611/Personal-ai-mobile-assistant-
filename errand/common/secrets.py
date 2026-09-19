@@ -41,6 +41,19 @@ def twilio_credentials() -> dict[str, Any]:
     return secret
 
 
+def telegram_credentials() -> dict[str, Any]:
+    """Expects {"bot_token": ..., "webhook_secret": ...}.
+
+    The webhook secret is the value Telegram echoes back in the
+    X-Telegram-Bot-Api-Secret-Token header on every update.
+    """
+    secret = get_secret(config.load().telegram_secret_id)
+    missing = {"bot_token", "webhook_secret"} - set(secret)
+    if missing:
+        raise RuntimeError(f"telegram secret is missing {', '.join(sorted(missing))}")
+    return secret
+
+
 def set_cached(secret_id: str, value: dict[str, Any]) -> None:
     """Tests only."""
     _cache[secret_id] = value

@@ -66,6 +66,7 @@ TABLE_VARS = {
     "connections": ("ERRAND_CONNECTIONS_TABLE", "errand-connections"),
     "budget": ("ERRAND_BUDGET_TABLE", "errand-budget"),
     "content": ("ERRAND_CONTENT_TABLE", "errand-content"),
+    "recipes": ("ERRAND_RECIPES_TABLE", "errand-recipes"),
 }
 
 
@@ -77,9 +78,15 @@ class Config:
     receipts_bucket: str = ""
     transcribe_bucket: str = ""
     queue_url: str = ""
+    # Which Channel implementation is live. The rest of the system does not
+    # read this -- only the ingress Lambda and channels.get_channel do.
+    channel: str = "telegram"
     twilio_secret_id: str = "errand/twilio"
     twilio_from_number: str = ""
     owner_number: str = ""
+    telegram_secret_id: str = "errand/telegram"
+    owner_telegram_id: str = ""
+    telegram_char_limit: int = 3500
     approval_ttl_seconds: int = 3600
     undo_seconds: int = 60
     tier3_cap_cents: int = 0
@@ -92,6 +99,10 @@ class Config:
             return self.tables[name]
         except KeyError as exc:
             raise ConfigError(f"no table configured for {name!r}") from exc
+
+    @property
+    def is_telegram(self) -> bool:
+        return self.channel == "telegram"
 
     @property
     def tier3_cap_configured(self) -> bool:
@@ -110,9 +121,13 @@ def load() -> Config:
         receipts_bucket=_optional("ERRAND_RECEIPTS_BUCKET"),
         transcribe_bucket=_optional("ERRAND_TRANSCRIBE_BUCKET"),
         queue_url=_optional("ERRAND_QUEUE_URL"),
+        channel=_optional("ERRAND_CHANNEL", "telegram").lower(),
         twilio_secret_id=_optional("ERRAND_TWILIO_SECRET_ID", "errand/twilio"),
         twilio_from_number=_optional("ERRAND_TWILIO_FROM"),
         owner_number=_optional("ERRAND_OWNER_NUMBER"),
+        telegram_secret_id=_optional("ERRAND_TELEGRAM_SECRET_ID", "errand/telegram"),
+        owner_telegram_id=_optional("ERRAND_OWNER_TELEGRAM_ID"),
+        telegram_char_limit=_int("ERRAND_TELEGRAM_CHAR_LIMIT", 3500),
         approval_ttl_seconds=_int("ERRAND_APPROVAL_TTL_SECONDS", 3600),
         # Tier 2 and 3 actions wait this long, with an Undo button, before
         # they execute.

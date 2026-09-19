@@ -10,6 +10,7 @@ locals {
     ERRAND_CONNECTIONS_TABLE    = aws_dynamodb_table.errand["connections"].name
     ERRAND_BUDGET_TABLE         = aws_dynamodb_table.errand["budget"].name
     ERRAND_CONTENT_TABLE        = aws_dynamodb_table.errand["content"].name
+    ERRAND_RECIPES_TABLE        = aws_dynamodb_table.errand["recipes"].name
     ERRAND_RECEIPTS_BUCKET      = aws_s3_bucket.receipts.bucket
     ERRAND_TRANSCRIBE_BUCKET    = aws_s3_bucket.voice.bucket
     ERRAND_QUEUE_URL            = aws_sqs_queue.inbound.url

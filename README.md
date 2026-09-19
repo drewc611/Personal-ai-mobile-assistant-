@@ -11,7 +11,11 @@
 [![actions pinned to SHA](https://img.shields.io/badge/actions-pinned%20to%20SHA-0a7bbb)](.github/workflows)
 
 Andrew's personal text agent. Runs in his own AWS account on Bedrock. One user,
-one phone number, no work data.
+one account, no work data.
+
+Messaging goes over **Telegram** by default — free, no carrier, two minutes to
+set up. Twilio SMS is the same code behind a config switch (`ERRAND_CHANNEL`),
+which is what the channel adapter is for.
 
 v0 is built: SMS in and out over Twilio, Gmail and Google Calendar read and
 draft with gated send, web search, task threads, approvals, standing rules,
@@ -172,6 +176,47 @@ exactly what the attacker asked, and asserts nothing left the system anyway.
 Slash forms (`/tasks`, `/budget`) work too. `T7 yes but change the subject` is
 not an approval: the arguments Andrew approved are not the arguments he just
 described, so it starts a new task.
+
+## Choosing the browser last (v1)
+
+`tools/strategy.py` picks the most boring route that can work, and records
+why:
+
+| Order | Approach | When |
+|---|---|---|
+| 1 | official API | the provider has one and it covers this intent |
+| 2 | email | they accept the request in writing |
+| 3 | recorded recipe | a previously saved flow still replays |
+| 4 | browser | nothing cheaper is available |
+
+Every extra page is another chance to meet a CAPTCHA, so the browser is what
+is left when nothing else can do it. A capability naming a tool that is not
+registered fails loudly rather than silently downgrading that provider to the
+browser forever.
+
+## Recorded recipes (v1)
+
+When a browser flow succeeds, its steps are saved and replayed next time. The
+model only steps in when the page actually changed — decided by each step's
+own `expect` assertion failing, not by a guess. A recipe that fails twice
+retires itself.
+
+Two things are designed out rather than warned about:
+
+**A step never holds a secret.** A field needing a password stores
+`secret_ref`, the name of a Secrets Manager entry; the value is fetched at
+replay and never written back into the recipe, the audit row, or a reply.
+Recording a credential as a literal is refused.
+
+**Replay is not an approval.** Every submitting step goes through the gate
+exactly as a model-driven step would, and the tier comes from what the task is
+doing *today* — the same recorded steps are tier 2 updating an address and
+tier 4 closing an account. If replay could execute because "it was approved
+last time", a recipe would be a way to launder an approval.
+
+The browser itself lands with the rest of v1. `browser_submit` is registered
+now so the gate works; its implementation refuses. That ordering is
+deliberate: the gate exists before the thing it gates.
 
 ## One channel interface, not one channel
 

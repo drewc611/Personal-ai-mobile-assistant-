@@ -35,7 +35,8 @@ EventBridge Scheduler -> undo releaser (every minute), daily approval digest
 ```
 
 Channel adapter: all messaging goes through one `Channel` interface (receive,
-send_text, send_buttons, send_file). Twilio SMS is the only v0 implementation.
+send_text, send_buttons, send_file). Telegram and Twilio SMS are both
+implemented; `ERRAND_CHANNEL` picks one.
 WhatsApp is the same Twilio API with a prefix on the number; a channel with
 tappable buttons, and v2 voice, plug in with no agent changes. `send_buttons`
 is the piece that makes that work: a Button carries a tap token and the text to
@@ -108,11 +109,15 @@ Blocker before real texting: US A2P 10DLC registration (see open items).
 
 Tools: AgentCore Browser. Recipes replay through it with Playwright.
 
-1. API first. Use an official API or email when one exists; browser only as a
+Items 1 and 2 are built; the rest wait on the browser itself.
+
+1. **(built)** API first. Use an official API or email when one exists; browser only as a
    fallback. Fewer pages means fewer CAPTCHAs.
-2. Recipes. A successful site flow is saved as replayable steps; the model
-   only intervenes when the page changed. Cancelling the same gym twice stops
-   depending on luck.
+2. **(built)** Recipes. A successful site flow is saved as replayable steps;
+   the model only intervenes when the page changed, detected by each step's
+   own expectation failing. Cancelling the same gym twice stops depending on
+   luck. A step holds a secret *reference*, never a secret, and replaying a
+   submit still goes through the gate.
 3. Preview. Tier 3 and 4 actions send a screenshot of the final confirmation
    page with the approval request.
 4. Receipts. Confirmation number, screenshot, and amount stored in S3 and sent

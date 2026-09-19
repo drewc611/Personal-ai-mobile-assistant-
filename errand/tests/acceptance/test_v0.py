@@ -32,6 +32,14 @@ from errand.tools import providers, registry
 pytestmark = pytest.mark.acceptance
 
 
+@pytest.fixture(autouse=True)
+def _sms_channel(monkeypatch):
+    """These are the v0 acceptance criteria, which are written against SMS.
+    Telegram is now the default channel, so they say which one they mean --
+    the Telegram path has its own end-to-end test."""
+    monkeypatch.setenv("ERRAND_CHANNEL", "twilio")
+
+
 class StubReader:
     def __init__(self, payload):
         self.payload = payload

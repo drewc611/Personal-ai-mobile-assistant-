@@ -15,7 +15,9 @@ import os
 import pytest
 
 os.environ.setdefault("ERRAND_BACKEND", "memory")
+os.environ.setdefault("ERRAND_CHANNEL", "telegram")
 os.environ.setdefault("ERRAND_OWNER_NUMBER", "+15555550123")
+os.environ.setdefault("ERRAND_OWNER_TELEGRAM_ID", "8675309")
 os.environ.setdefault("ERRAND_TWILIO_FROM", "+15555550999")
 os.environ.setdefault("ERRAND_WEBHOOK_URL", "https://errand.example.com/sms")
 os.environ.setdefault("ERRAND_DEFAULT_MODEL_ID", "test-haiku")
@@ -46,6 +48,8 @@ from errand.tools import providers  # noqa: E402
 FIXED_NOW = 1_764_500_000.0  # 2025-11-30T12:13:20Z
 OWNER_NUMBER = "+15555550123"
 AUTH_TOKEN = "test_auth_token"
+OWNER_TELEGRAM_ID = "8675309"
+TELEGRAM_SECRET = "a-long-enough-webhook-secret-value-32+"
 WEBHOOK_URL = "https://errand.example.com/sms"
 
 
@@ -57,6 +61,10 @@ def _isolate():
     secrets.clear_cache()
     secrets.set_cached(
         "errand/twilio", {"account_sid": "AC_test", "auth_token": AUTH_TOKEN}
+    )
+    secrets.set_cached(
+        "errand/telegram",
+        {"bot_token": "test-bot-token", "webhook_secret": TELEGRAM_SECRET},
     )
 
     providers.set_providers(providers.build_fake_providers())
@@ -220,3 +228,61 @@ def token_for(reply, label: str) -> str:
         if button.label.lower().startswith(label.lower()):
             return button.token
     raise AssertionError(f"no {label!r} button in {[b.label for b in reply.buttons]}")
+
+
+# ---------------------------------------------------------------- Telegram
+
+
+def telegram_text(text: str, *, sender: str = OWNER_TELEGRAM_ID, update_id: str = "1"):
+    """A Telegram Update for a plain text message."""
+    return {
+        "update_id": int(update_id),
+        "message": {
+            "message_id": 100 + int(update_id),
+            "from": {"id": int(sender)},
+            "chat": {"id": int(sender)},
+            "text": text,
+        },
+    }
+
+
+def telegram_voice(*, sender: str = OWNER_TELEGRAM_ID, update_id: str = "1", caption: str = ""):
+    message = {
+        "message_id": 100 + int(update_id),
+        "from": {"id": int(sender)},
+        "chat": {"id": int(sender)},
+        "voice": {"file_id": "AwACAgEAAx", "duration": 3, "mime_type": "audio/ogg"},
+    }
+    if caption:
+        message["caption"] = caption
+    return {"update_id": int(update_id), "message": message}
+
+
+def telegram_button(token: str, *, sender: str = OWNER_TELEGRAM_ID, update_id: str = "1",
+                    message_id: str = "500"):
+    return {
+        "update_id": int(update_id),
+        "callback_query": {
+            "id": "cbq1",
+            "from": {"id": int(sender)},
+            "data": token,
+            "message": {"message_id": int(message_id), "chat": {"id": int(sender)}},
+        },
+    }
+
+
+def telegram_event(update, *, secret=None, header=None):
+    """An API Gateway event carrying a Telegram webhook."""
+    import json as _json
+
+    from errand.channels import telegram as _tg
+
+    headers = {"Content-Type": "application/json"}
+    name = header or _tg.SECRET_HEADER
+    if secret is not None:
+        headers[name] = secret
+    elif header is None:
+        headers[name] = TELEGRAM_SECRET
+    else:
+        headers[name] = TELEGRAM_SECRET
+    return {"body": _json.dumps(update), "headers": headers, "isBase64Encoded": False}
