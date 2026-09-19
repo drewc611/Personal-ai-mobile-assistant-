@@ -300,6 +300,14 @@ Two ways to get the value in there. Either put it in yourself:
 {"bot_token": "...", "webhook_secret": "..."}
 ```
 
+If you created it before running terraform, import it once so terraform
+adopts it rather than failing on a name that already exists:
+
+```bash
+terraform -chdir=errand/infra import \\
+  aws_secretsmanager_secret.telegram errand/telegram
+```
+
 Or add two repository secrets at Settings → Secrets and variables → Actions
 and let the deploy write it:
 

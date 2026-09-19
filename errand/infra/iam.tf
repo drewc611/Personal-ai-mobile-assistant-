@@ -31,8 +31,14 @@ data "aws_iam_policy_document" "ingress" {
   }
 
   statement {
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.twilio.arn]
+    actions = ["secretsmanager:GetSecretValue"]
+    # Both channels, because ERRAND_CHANNEL decides which is live at runtime
+    # and an IAM policy cannot read an environment variable. Named explicitly
+    # rather than widened to a wildcard over every secret in the account.
+    resources = [
+      aws_secretsmanager_secret.telegram.arn,
+      aws_secretsmanager_secret.twilio.arn,
+    ]
   }
 
   statement {
@@ -91,8 +97,14 @@ data "aws_iam_policy_document" "dispatcher" {
   }
 
   statement {
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.twilio.arn]
+    actions = ["secretsmanager:GetSecretValue"]
+    # Both channels, because ERRAND_CHANNEL decides which is live at runtime
+    # and an IAM policy cannot read an environment variable. Named explicitly
+    # rather than widened to a wildcard over every secret in the account.
+    resources = [
+      aws_secretsmanager_secret.telegram.arn,
+      aws_secretsmanager_secret.twilio.arn,
+    ]
   }
 
   statement {
