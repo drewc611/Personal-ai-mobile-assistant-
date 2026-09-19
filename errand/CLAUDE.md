@@ -6,7 +6,9 @@ Read PLAN.md before any work. Build only the current phase. Do not start a later
 
 ## Stack (fixed)
 
-Python 3.12, Strands Agents, Amazon Bedrock, Terraform. Andrew's personal AWS account, us-east-1 (Nova Sonic launched there and v2 needs it).
+Python 3.12, Strands Agents, Amazon Bedrock, Terraform. Andrew's personal AWS account, us-east-2.
+
+This originally said us-east-1, because Nova Sonic launched there and v2 voice needs it. Andrew moved it to us-east-2 after his account was already set up there, accepting that tradeoff. v2 will either call Sonic cross-region or use whatever speech model is in us-east-2 by then; either way it is a v2 problem, not a reason to keep the rest of the stack in a region he is not using.
 Hosting: Bedrock AgentCore Runtime (agent), AgentCore Memory, AgentCore Gateway (tools), AgentCore Identity (outbound OAuth), AgentCore Browser (v1), AgentCore Observability.
 Ingress: API Gateway + Lambda for the Twilio webhook, SQS FIFO queue to the agent.
 Messaging: Twilio SMS, behind the `Channel` interface in `channels/`. Voice in v2.

@@ -1,7 +1,13 @@
 variable "region" {
-  description = "Andrew's personal account, us-east-1 as CLAUDE.md fixes it."
+  description = <<-EOT
+    Andrew's personal account. us-east-2 by his call.
+
+    This was us-east-1 because Nova Sonic launched there and v2 voice needs
+    it. That tradeoff is accepted and recorded in CLAUDE.md: v2 will either
+    call Sonic cross-region or use whatever is in us-east-2 by then.
+  EOT
   type        = string
-  default     = "us-east-1"
+  default     = "us-east-2"
 }
 
 variable "owner_number" {

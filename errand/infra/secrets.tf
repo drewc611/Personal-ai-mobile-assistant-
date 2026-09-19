@@ -6,6 +6,11 @@
 #   read -rsp "SID: " SID; echo; read -rsp "token: " TOKEN; echo
 #   jq -nc --arg s "$SID" --arg t "$TOKEN" '{account_sid:$s,auth_token:$t}' > twilio.json
 #   unset SID TOKEN
+# For Telegram the value is {"bot_token": ..., "webhook_secret": ...}, and
+# the deploy workflow writes it for you from repository secrets. Both keys
+# are required: the ingress Lambda checks webhook_secret on every update.
+#
+# For Twilio:
 #   aws secretsmanager put-secret-value --secret-id errand/twilio \
 #     --secret-string file://twilio.json
 #   shred -u twilio.json
@@ -20,6 +25,12 @@
 resource "aws_secretsmanager_secret" "twilio" {
   name       = "errand/twilio"
   kms_key_id = aws_kms_key.errand.arn
+}
+
+resource "aws_secretsmanager_secret" "telegram" {
+  name        = "errand/telegram"
+  description = "Bot token, and the webhook secret the ingress Lambda checks."
+  kms_key_id  = aws_kms_key.errand.arn
 }
 
 resource "aws_secretsmanager_secret" "google_oauth" {

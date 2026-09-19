@@ -115,7 +115,7 @@ class Config:
 
 def load() -> Config:
     return Config(
-        region=_optional("ERRAND_REGION", "us-east-1"),
+        region=_optional("ERRAND_REGION", "us-east-2"),
         backend=_optional("ERRAND_BACKEND", "dynamodb"),
         tables={key: _optional(var, default) for key, (var, default) in TABLE_VARS.items()},
         receipts_bucket=_optional("ERRAND_RECEIPTS_BUCKET"),

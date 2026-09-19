@@ -290,10 +290,45 @@ answers everything with "no budget is set": `monthly_budget_usd`,
 `tier3_cap_cents`, and `model_rates_json`. It also catches a model id that has
 no price entry, which would make every call routed to it refuse as unpriced.
 
+**The bot wires itself.** The deploy reads `errand/telegram` from Secrets
+Manager, calls `setWebhook` so Telegram delivers to your API Gateway URL, and
+prints `getWebhookInfo` so you can see it took.
+
+Two ways to get the value in there. Either put it in yourself:
+
+```json
+{"bot_token": "...", "webhook_secret": "..."}
+```
+
+If you created it before running terraform, import it once so terraform
+adopts it rather than failing on a name that already exists:
+
+```bash
+terraform -chdir=errand/infra import \\
+  aws_secretsmanager_secret.telegram errand/telegram
+```
+
+Or add two repository secrets at Settings → Secrets and variables → Actions
+and let the deploy write it:
+
+| Secret | What |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | from @BotFather |
+| `TELEGRAM_WEBHOOK_SECRET` | any 32+ random chars — `openssl rand -hex 32` |
+
+Secrets Manager is the source of truth either way, so the two cannot disagree.
+Neither value is ever printed: a value read back from AWS is masked
+explicitly, because unlike a GitHub secret it does not arrive masked.
+
+`webhook_secret` is what the ingress Lambda checks on every update (hard rule
+4), so a secret missing it fails the deploy loudly rather than leaving you
+with a bot whose every message is silently rejected.
+
 **Still yours to do by hand**, because they are not AWS:
 
-1. **Secrets.** Terraform creates the secret containers and never the values,
-   because Terraform state is a file on disk.
+1. **Secrets, if you are on Twilio rather than Telegram.** Terraform creates
+   the secret containers and never the values, because Terraform state is a
+   file on disk.
    ```bash
    # Read interactively so the token never lands in shell history, an agent
    # transcript, or the process list. `read -rs` does not echo; the value
