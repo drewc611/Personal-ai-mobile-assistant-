@@ -6,6 +6,6 @@
 
 bucket         = "errand-tfstate-000000000000-abcdef123456"
 key            = "errand/v0/terraform.tfstate"
-region         = "us-east-1"
+region         = "us-east-2"
 dynamodb_table = "errand-tfstate-lock"
 encrypt        = true
