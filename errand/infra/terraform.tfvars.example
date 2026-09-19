@@ -1,9 +1,19 @@
 # Copy to terraform.tfvars and fill in. No secrets belong in this file: the
-# Twilio auth token goes to Secrets Manager, and the Google user tokens to
-# AgentCore Identity (hard rule 7).
+# bot token and the Twilio auth token go to Secrets Manager, and the Google
+# user tokens to AgentCore Identity (hard rule 7).
 
-owner_number       = "+15555550123"
-twilio_from_number = "+15555550999"
+# telegram or twilio. Whichever you pick decides which owner identity below
+# is required; leave the other one empty.
+channel = "telegram"
+
+# Hard rule 3: the one sender the system answers. Numeric Telegram user id,
+# not an @username. Message the bot and read it out of the ingress log, or
+# ask @userinfobot.
+owner_telegram_id = "PUT-YOUR-NUMERIC-TELEGRAM-USER-ID-HERE"
+
+# Only for channel = "twilio". Leave empty otherwise.
+owner_number       = ""
+twilio_from_number = ""
 
 # Look all three up in the Bedrock console for this account and region.
 # Do not copy an id out of documentation or out of a model's memory.
