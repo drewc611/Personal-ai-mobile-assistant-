@@ -74,3 +74,89 @@ jobs:
       - name: What exists now
         if: inputs.apply
         run: terraform -chdir=errand/infra output
+
+      # ------------------------------------------------------------------
+      # Wiring the bot. These steps only do anything once the repository
+      # secrets exist, so a deploy without them still succeeds and just does
+      # not touch the bot.
+      # ------------------------------------------------------------------
+
+      - name: Push the Telegram credentials into Secrets Manager
+        if: inputs.apply
+        env:
+          # Read into the environment rather than interpolated into a command,
+          # so the value is never a process argument visible in `ps`, and is
+          # masked by Actions if anything does print it.
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+        run: |
+          set -e
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "TELEGRAM_BOT_TOKEN is not set; skipping the bot wiring."
+            echo "Add it at Settings > Secrets and variables > Actions."
+            exit 0
+          fi
+          if [ -z "$WEBHOOK_SECRET" ]; then
+            echo "TELEGRAM_WEBHOOK_SECRET is not set."
+            echo "Generate one with: openssl rand -hex 32"
+            exit 1
+          fi
+          umask 077
+          jq -nc --arg t "$BOT_TOKEN" --arg s "$WEBHOOK_SECRET" \
+            '{bot_token:$t,webhook_secret:$s}' > tg.json
+          aws secretsmanager put-secret-value \
+            --secret-id errand/telegram \
+            --secret-string file://tg.json
+          shred -u tg.json
+          echo "Telegram credentials stored. They are not printed anywhere."
+
+      - name: Point Telegram at the webhook
+        if: inputs.apply
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+        run: |
+          set -e
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "TELEGRAM_BOT_TOKEN is not set; skipping the bot wiring."
+            echo "Add it at Settings > Secrets and variables > Actions."
+            exit 0
+          fi
+          url="$(terraform -chdir=errand/infra output -raw webhook_url)"
+
+          # --data-urlencode keeps the secret out of the URL, so it cannot end
+          # up in a proxy log. -s so a failure does not dump the token-bearing
+          # request line.
+          response="$(curl -sS -X POST \
+            "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+            --data-urlencode "url=${url}" \
+            --data-urlencode "secret_token=${WEBHOOK_SECRET}" \
+            --data-urlencode "allowed_updates=[\"message\",\"edited_message\",\"callback_query\"]" \
+            --data-urlencode "drop_pending_updates=true")"
+
+          # The response echoes the URL but never the token or the secret.
+          echo "$response"
+          echo "$response" | jq -e '.ok == true' > /dev/null || {
+            echo "setWebhook failed; see the description above."
+            exit 1
+          }
+          echo "Telegram will now deliver updates to ${url}"
+
+      - name: Confirm what Telegram thinks
+        if: inputs.apply
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          set -e
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "TELEGRAM_BOT_TOKEN is not set; skipping the bot wiring."
+            echo "Add it at Settings > Secrets and variables > Actions."
+            exit 0
+          fi
+          # getWebhookInfo returns the URL, pending update count and the last
+          # error, which is the single most useful thing to see after a deploy.
+          curl -sS "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo" \
+            | jq '{url: .result.url,
+                   pending: .result.pending_update_count,
+                   last_error: .result.last_error_message,
+                   last_error_at: .result.last_error_date}'
