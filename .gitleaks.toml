@@ -28,6 +28,8 @@ path = '''\.py$'''
 [allowlist]
 description = "Known fake values in tests and fixtures"
 paths = [
+  # The audit report quotes the placeholder values it found; it is evidence, not a leak.
+  '''(^|/)SECURITY-AUDIT-\d{4}-\d{2}(-\d{2})?\.md$''',
   '''(^|/)(tests?|__tests__|spec|fixtures?|testdata)/''',
   '''\.(test|spec)\.[cm]?[jt]sx?$''',
   '''node-test\.mjs$''',
