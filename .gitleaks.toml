@@ -1,0 +1,45 @@
+# Gitleaks configuration. Extends the built-in ruleset and adds the placeholder
+# patterns AI assistants tend to emit. Run locally with:
+#   gitleaks git . --config .gitleaks.toml      (full history)
+#   gitleaks dir . --config .gitleaks.toml      (working tree)
+title = "repo secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "placeholder-credential"
+description = "Placeholder or default credential left in code (change-me, dev-secret, password123 ...)"
+regex = '''(?i)(secret|password|passwd|token|api[_-]?key)[^\n]{0,20}[:=][^\n]{0,5}['"]?(change[-_]?me|change[-_]this[-_]\w+|dev[-_]?secret|dev[-_]?password|super[-_]?secret|secret123|password123|admin123|letmein|p@ssw0rd|passw0rd)['"]?'''
+keywords = ["change-me", "changeme", "change_me", "change-this", "dev-secret", "devsecret", "dev-password", "supersecret", "super-secret", "secret123", "password123", "admin123", "letmein", "p@ssw0rd", "passw0rd"]
+
+[[rules]]
+id = "compose-secret-default"
+description = "docker-compose gives a secret variable a non-empty default"
+regex = '''\$\{[A-Za-z0-9_]*(PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|PRIVATE_KEY)[A-Za-z0-9_]*:-[^}\s$][^}\s]*\}'''
+path = '''(?i)(docker-compose[^/]*\.ya?ml|compose[^/]*\.ya?ml)$'''
+
+[[rules]]
+id = "flask-hardcoded-secret-key"
+description = "Flask SECRET_KEY assigned a literal"
+regex = '''SECRET_KEY['"]?\]?\s*=\s*['"][^'"]{4,}['"]'''
+path = '''\.py$'''
+
+[allowlist]
+description = "Known fake values in tests and fixtures"
+paths = [
+  '''(^|/)(tests?|__tests__|spec|fixtures?|testdata)/''',
+  '''\.(test|spec)\.[cm]?[jt]sx?$''',
+  '''node-test\.mjs$''',
+  '''(^|/)conftest\.py$''',
+  '''\.example$''',
+  '''\.sample$''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)node_modules/''',
+]
+regexes = [
+  '''sk_live_notarealvalue1234''',
+  '''not-a-real-password-timing-decoy''',
+  '''financert\.(scenarios|debts|cohort|holdings)\.v1''',
+  '''DLP/anomaly/malware/ransomware''',
+]
