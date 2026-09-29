@@ -1,0 +1,12 @@
+# One user, one owner. This exists so that a review is requested
+# automatically rather than remembered.
+*                       @drewc611
+
+# The files where a careless change quietly removes a guarantee.
+/errand/policy/         @drewc611
+/errand/reader/         @drewc611
+/errand/ingress/        @drewc611
+/errand/channels/       @drewc611
+/errand/CLAUDE.md       @drewc611
+/.github/workflows/     @drewc611
+/errand/infra/iam.tf    @drewc611

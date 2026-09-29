@@ -1,0 +1,12 @@
+# What the Lambdas need, which is much less than the agent needs.
+#
+# The ingress and dispatcher functions never load a model: the Strands agent
+# runs inside AgentCore Runtime and the dispatcher reaches it over the runtime
+# API. `strands-agents` and `bedrock-agentcore` are imported lazily inside
+# StrandsPlanner and agent/runtime.py, so they are only needed in the agent
+# container image, not in this zip.
+#
+# boto3 is pinned rather than relying on the version bundled with the Lambda
+# runtime, because the bundled botocore can lag far enough behind to be
+# missing the bedrock-agentcore client entirely.
+boto3>=1.35
