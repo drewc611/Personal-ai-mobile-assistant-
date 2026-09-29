@@ -12,6 +12,7 @@ import json
 import pytest
 
 from errand.channels import twilio
+from errand.common.config import ConfigError
 from errand.ingress import handler
 from errand.store import audit_store
 from errand.tests.conftest import (
@@ -102,6 +103,22 @@ def test_a_stranger_gets_no_reply_and_one_audit_row(_no_sqs, channel):
 def test_a_stranger_number_is_hashed_not_stored(_no_sqs):
     handler.handler(signed_event(sms_params("hi", sender="+15555559999")))
     assert "5555559999" not in json.dumps(audit_store.security_events())
+
+
+def test_an_unset_salt_fails_loudly_instead_of_using_a_known_one(monkeypatch):
+    monkeypatch.delenv("ERRAND_NUMBER_SALT", raising=False)
+    monkeypatch.delenv("ERRAND_SENDER_SALT", raising=False)
+
+    with pytest.raises(ConfigError, match="ERRAND_NUMBER_SALT"):
+        handler.sender_hash("+15555559999")
+
+
+def test_the_hash_depends_on_the_configured_salt(monkeypatch):
+    monkeypatch.setenv("ERRAND_NUMBER_SALT", "first-salt-value")
+    first = handler.sender_hash("+15555559999")
+    monkeypatch.setenv("ERRAND_NUMBER_SALT", "second-salt-value")
+
+    assert handler.sender_hash("+15555559999") != first
 
 
 def test_the_allowlist_is_exact_not_a_prefix(_no_sqs):
