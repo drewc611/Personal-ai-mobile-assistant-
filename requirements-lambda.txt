@@ -9,4 +9,12 @@
 # boto3 is pinned rather than relying on the version bundled with the Lambda
 # runtime, because the bundled botocore can lag far enough behind to be
 # missing the bedrock-agentcore client entirely.
-boto3>=1.35
+boto3==1.43.104
+# boto3's own dependencies, pinned to what a clean Python 3.12 install resolves,
+# so the Lambda zip is the same from one build to the next.
+botocore==1.43.104
+jmespath==1.1.0
+python-dateutil==2.9.0.post0
+s3transfer==0.19.2
+six==1.17.0
+urllib3==2.8.0
