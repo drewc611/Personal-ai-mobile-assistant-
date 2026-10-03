@@ -1,0 +1,30 @@
+# Local guardrail: install once with
+#   pipx install pre-commit   (or: pip install pre-commit)
+#   pre-commit install
+# then every commit is checked before it exists. CI runs the same checks.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.2
+    hooks:
+      - id: gitleaks
+        args: ["--config", ".gitleaks.toml"]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-merge-conflict
+  - repo: local
+    hooks:
+      - id: placeholder-secrets
+        name: placeholder credentials and secret defaults
+        entry: bash scripts/check-placeholder-secrets.sh
+        language: system
+        pass_filenames: false
+      - id: forbid-dotenv
+        name: forbid committing .env files
+        entry: .env files hold real secrets and must stay untracked (commit .env.example instead)
+        language: fail
+        files: '(^|/)\.env(\.[^/]*)?$'
+        exclude: '\.(example|sample|template)$'

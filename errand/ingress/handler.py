@@ -47,8 +47,7 @@ def _raw_body(event: dict[str, Any]) -> str:
 def sender_hash(sender_id: str) -> str:
     """An unrecognised sender is logged as a hash. Telling two of them apart is
     worth something; keeping either one's number or account id is not."""
-    salt = os.environ.get("ERRAND_SENDER_SALT") or os.environ.get("ERRAND_NUMBER_SALT", "errand")
-    return hashlib.sha256((salt + str(sender_id)).encode()).hexdigest()
+    return hashlib.sha256((config.sender_salt() + str(sender_id)).encode()).hexdigest()
 
 
 def _response(status: int, body: str = "", content_type: str = "text/plain") -> dict[str, Any]:

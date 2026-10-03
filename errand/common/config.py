@@ -153,6 +153,18 @@ def escalation_model_id() -> str:
     return _require("ERRAND_ESCALATION_MODEL_ID")
 
 
+def sender_salt() -> str:
+    """Salt for hashing rejected senders in the audit log. Required: with a
+    known fallback, the hashed numbers could be brute-forced from audit rows."""
+    salt = _optional("ERRAND_SENDER_SALT") or _optional("ERRAND_NUMBER_SALT")
+    if not salt:
+        raise ConfigError(
+            "ERRAND_NUMBER_SALT is not set. Terraform sets it to a random value on the "
+            "ingress Lambda; outside Terraform, generate one and export it."
+        )
+    return salt
+
+
 def reader_model_id() -> str:
     """The quarantined reader. Haiku, zero tools, fixed schema."""
     return _require("ERRAND_READER_MODEL_ID")

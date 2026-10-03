@@ -113,13 +113,26 @@ data "aws_iam_policy_document" "dispatcher" {
   }
 
   statement {
-    actions   = ["transcribe:StartTranscriptionJob", "transcribe:GetTranscriptionJob"]
-    resources = ["*"] # Transcribe job ARNs are not knowable before creation.
+    actions = ["transcribe:StartTranscriptionJob"]
+    # AWS's service reference lists no resource types for this action, so it
+    # cannot be scoped by ARN.
+    resources = ["*"]
   }
 
   statement {
-    actions   = ["bedrock-agentcore:InvokeAgentRuntime"]
-    resources = ["*"] # Narrow to the runtime ARN once AgentCore creates it.
+    actions = ["transcribe:GetTranscriptionJob"]
+    # dispatcher/voice.py names every job "errand-<run id>".
+    resources = ["arn:aws:transcribe:${var.region}:${data.aws_caller_identity.current.account_id}:transcription-job/errand-*"]
+  }
+
+  statement {
+    actions = ["bedrock-agentcore:InvokeAgentRuntime"]
+    # The runtime is created outside this Terraform, so its id is not known
+    # here. Confined to runtimes and their endpoints in this account and region.
+    resources = [
+      "arn:aws:bedrock-agentcore:${var.region}:${data.aws_caller_identity.current.account_id}:runtime/*",
+      "arn:aws:bedrock-agentcore:${var.region}:${data.aws_caller_identity.current.account_id}:runtime/*/runtime-endpoint/*",
+    ]
   }
 
   statement {
@@ -129,7 +142,7 @@ data "aws_iam_policy_document" "dispatcher" {
 
   statement {
     actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
-    resources = ["*"]
+    resources = ["*"] # X-Ray write actions do not support resource-level permissions.
   }
 }
 
@@ -189,8 +202,16 @@ data "aws_iam_policy_document" "agent" {
   }
 
   statement {
-    actions   = ["bedrock-agentcore:GetResourceOauth2Token"]
-    resources = ["*"] # Narrow to the credential provider ARN once it exists.
+    actions = ["bedrock-agentcore:GetResourceOauth2Token"]
+    # The token vault, credential providers and workload identities are created
+    # outside this Terraform, so their ids are not known here. Confined to this
+    # account and region, using the four resource types the action authorizes on.
+    resources = [
+      "arn:aws:bedrock-agentcore:${var.region}:${data.aws_caller_identity.current.account_id}:token-vault/*",
+      "arn:aws:bedrock-agentcore:${var.region}:${data.aws_caller_identity.current.account_id}:token-vault/*/oauth2credentialprovider/*",
+      "arn:aws:bedrock-agentcore:${var.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/*",
+      "arn:aws:bedrock-agentcore:${var.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/*/workload-identity/*",
+    ]
   }
 
   statement {
@@ -200,7 +221,7 @@ data "aws_iam_policy_document" "agent" {
 
   statement {
     actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
-    resources = ["*"]
+    resources = ["*"] # X-Ray write actions do not support resource-level permissions.
   }
 }
 

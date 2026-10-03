@@ -4,6 +4,10 @@
 # The Lambdas use requirements-lambda.txt instead. They never load a model, so
 # bundling these into the Lambda zip adds tens of megabytes of code that is
 # never imported, against a 50MB limit.
-boto3>=1.35
-strands-agents>=0.1
-bedrock-agentcore>=0.1
+#
+# The three direct dependencies are pinned to what a clean Python 3.12 install
+# resolves. Their own dependencies still resolve at install time; the weekly
+# pip-audit run covers them.
+boto3==1.43.104
+strands-agents==1.57.1
+bedrock-agentcore==1.24.0
